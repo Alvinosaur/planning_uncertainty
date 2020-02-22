@@ -9,6 +9,7 @@ N = 10000  # total simulation iterations
 test_N = 20000  # iters for each test of a parameter
 NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
+LOGGING = True
 
 # pybullet_data built-in models
 plane_urdf_filepath = "plane.urdf"
@@ -181,6 +182,9 @@ def test_diff_factors():
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.setGravity(0,0,GRAVITY)
     planeId = p.loadURDF(plane_urdf_filepath)
+    log_id = -1
+    if LOGGING:
+        log_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "result.mp4")
 
     # table model
     table_start_pos = [0, 0, 0]
@@ -212,9 +216,9 @@ def test_diff_factors():
 
     test = Test(
         bottle_mass = 1, 
-        lat_fric = 1, 
-        roll_fric = 1, 
-        spin_fric = 1, 
+        lat_fric = 0.1,  # static friction
+        roll_fric = 0.05, 
+        spin_fric = 0,  # shouldn't be any resistance in spinning in midair
         bounce = 1, 
         contact_stiffness = 1, 
         contact_dampness = 1, 
@@ -230,9 +234,9 @@ def test_diff_factors():
         bodyUniqueId=bottle_id, 
         linkIndex=BASE_ID, 
         # mass=test.bottle_mass,
-        # lateralFriction=test.lat_fric,
-        # spinningFriction=test.spin_fric,
-        # rollingFriction=test.roll_fric,
+        lateralFriction=test.lat_fric,
+        spinningFriction=test.spin_fric,
+        rollingFriction=test.roll_fric,
         # restitution=test.bounce,
         # contactStiffness=test.contact_stiffness,
         # contactDamping=test.contact_dampness)
@@ -246,6 +250,8 @@ def test_diff_factors():
     reset_arm(arm_id=arm_id, pos=arm_start_pos, ori=arm_start_ori)
 
     run_sim()
+
+    p.stopStateLogging(log_id)
 
     p.disconnect()
 
