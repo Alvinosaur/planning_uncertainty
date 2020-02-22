@@ -21,9 +21,9 @@ table_filepath = "table/table.urdf"
 class Bottle:
     def __init__(self, table_height):
         self.radius = 0.05
-        self.height = 0.3
+        self.height = 0.5
         self.mass = 1
-        self.start_pos = [0.5, 0, table_height+.1]
+        self.start_pos = [0.5, 0, table_height+.3]
         self.start_ori = [0, 0, 0, 1]
 
 class Arm:
@@ -38,9 +38,12 @@ class Arm:
         self.jr = [5.8, 4, 5.8, 4, 5.8, 4, 6]
         #restposes for null space
         # self.rp = [0, 0, 0, 0.5 * math.pi, 0, -math.pi * 0.5 * 0.66, 0]
-        self.rp = [0, math.pi/2, 0, 0, 0, 0, 0]
+        self.rp = [math.pi, math.pi/2, 0, 0, 0, 0, 0]
         #joint damping coefficents
         self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
+
+        self.max_force = 20
+        self.max_vel = 20
 
 class Test:
     def __init__(self, bottle_mass, lat_fric, roll_fric, spin_fric, bounce, 
@@ -71,11 +74,12 @@ def change_arm_params():
 
 def run_sim(arm):
     t = 0
-    # p.setJointMotorControl2(bodyUniqueId=arm.arm_id, 
-    #         jointIndex=0, 
-    #         controlMode=p.VELOCITY_CONTROL,
-    #         targetVelocity = 20,
-    #         force = 20)
+    p.setJointMotorControl2(bodyUniqueId=arm.arm_id, 
+            jointIndex=0, 
+            controlMode=p.VELOCITY_CONTROL,
+            targetVelocity = -20,
+            force = arm.max_force,
+            maxVelocity=arm.max_vel)
     for i in range(test_N):
         p.stepSimulation()
         time.sleep(1./240.)
