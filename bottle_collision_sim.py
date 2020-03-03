@@ -6,10 +6,10 @@ import math
 GRAVITY = -9.81
 BASE_ID = -1
 N = 10000  # total simulation iterations
-test_N = 20000  # iters for each test of a parameter
+test_N = 1500  # iters for each test of a parameter
 NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
-LOGGING = True
+LOGGING = False
 
 # pybullet_data built-in models
 plane_urdf_filepath = "plane.urdf"
@@ -21,9 +21,9 @@ table_filepath = "table/table.urdf"
 # water bottle 
 class Bottle:
     def __init__(self, table_height):
-        self.radius = 0.05
-        self.height = 0.5
-        self.mass = 1
+        self.radius = 0.03175  # m
+        self.height = 0.1905   # m
+        self.mass = 0.5        # kg
         self.start_pos = [0.5, 0, table_height+.3]
         self.start_ori = [0, 0, 0, 1]
 
@@ -47,12 +47,10 @@ class Arm:
         self.max_vel = 20
 
 class Test:
-    def __init__(self, bottle_mass, lat_fric, roll_fric, spin_fric, bounce, 
+    def __init__(self, bottle_mass, lat_fric, bounce, 
         contact_stiffness, contact_dampness, bottle_inertia):
         self.bottle_mass = bottle_mass
         self.lat_fric = lat_fric
-        self.roll_fric = roll_fric
-        self.spin_fric = spin_fric
         self.bounce = bounce 
         self.contact_stiffness = contact_stiffness
         self.contact_dampness = contact_dampness
@@ -63,7 +61,7 @@ def reset_arm(arm_id, pos, ori):
     p.resetBasePositionAndOrientation(bodyUniqueId=arm_id, 
         posObj=pos,
         ornObj=ori)
-
+    
 
 def rotate_arm():
     return
@@ -196,12 +194,6 @@ def test_diff_factors():
     arm = Arm()
     arm_start_pos = [0, 0, table_height]
     arm_start_ori = p.getQuaternionFromEuler([0, 0, 0])
-    arm.arm_id = p.loadURDF(arm_filepath, arm_start_pos, arm_start_ori)
-    if (p.getNumJoints(arm.arm_id) != NUM_JOINTS):
-        print("Invalid number of joints. Expected: %d, Actual: %d", NUM_JOINTS, num_joints)
-        exit()  # undefined
-    for i in range(NUM_JOINTS):
-        p.resetJointState(arm.arm_id, i, arm.rp[i])
     
     # arm sim params
     #trailDuration is duration (in seconds) after debug lines will be removed automatically
@@ -214,44 +206,46 @@ def test_diff_factors():
         radius=bottle.radius, 
         height=bottle.height)
 
-    test = Test(
-        bottle_mass = 1, 
-        lat_fric = 0.1,  # static friction
-        roll_fric = 0.05, 
-        spin_fric = 0,  # shouldn't be any resistance in spinning in midair
-        bounce = 1, 
-        contact_stiffness = 1, 
-        contact_dampness = 1, 
-        bottle_inertia = [0, 0, 0]
-    )
+    for i in range(5):
 
-    bottle_id = p.createMultiBody(
-        baseMass=bottle.mass, 
-        baseInertialFramePosition=test.bottle_inertia,
-        baseCollisionShapeIndex=bottle_col_id,
-        basePosition=bottle.start_pos)
-    p.changeDynamics(
-        bodyUniqueId=bottle_id, 
-        linkIndex=BASE_ID, 
-        # mass=test.bottle_mass,
-        lateralFriction=test.lat_fric,
-        spinningFriction=test.spin_fric,
-        rollingFriction=test.roll_fric,
-        # restitution=test.bounce,
-        # contactStiffness=test.contact_stiffness,
-        # contactDamping=test.contact_dampness)
-    )
+        test = Test(
+            bottle_mass = 1,  #kg
+            lat_fric = 0.25,  # static friction
+            bounce = 0.5, 
+            contact_stiffness = 1, 
+            contact_dampness = 1, 
+            bottle_inertia = [0, 0, 0]
+        )
 
-    run_sim(arm)
+        bottle_id = p.createMultiBody(
+            baseMass=bottle.mass, 
+            baseInertialFramePosition=test.bottle_inertia,
+            baseCollisionShapeIndex=bottle_col_id,
+            basePosition=bottle.start_pos)
+        p.changeDynamics(
+            bodyUniqueId=bottle_id, 
+            linkIndex=BASE_ID, 
+            # mass=test.bottle_mass,
+            lateralFriction=test.lat_fric,
+            # restitution=test.bounce,
+            # contactStiffness=test.contact_stiffness,
+            # contactDamping=test.contact_dampness)
+        )
 
-    p.removeBody(bottle_id)
-        
-    # reset other components of simulation
-    reset_arm(arm_id=arm_id, pos=arm_start_pos, ori=arm_start_ori)
+        arm.arm_id = p.loadURDF(arm_filepath, arm_start_pos, arm_start_ori)
+        for i in range(NUM_JOINTS):
+            p.resetJointState(arm.arm_id, i, arm.rp[i])
 
-    run_sim()
+        print(i)
+        run_sim(arm)
 
-    p.stopStateLogging(log_id)
+        # p.removeBody(bottle_id)
+        p.removeBody(arm.arm_id)
+            
+        # reset other components of simulation
+        # reset_arm(arm_id=arm.arm_id, pos=arm_start_pos, ori=arm_start_ori)
+        if LOGGING:
+            p.stopStateLogging(log_id)
 
     p.disconnect()
 
