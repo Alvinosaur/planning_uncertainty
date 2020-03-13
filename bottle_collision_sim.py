@@ -2,14 +2,26 @@ import pybullet as p
 import time
 import pybullet_data
 import math
+import numpy as np
+# from scipy.optimize import minimize
 
 GRAVITY = -9.81
 BASE_ID = -1
 N = 10000  # total simulation iterations
-test_N = 1500  # iters for each test of a parameter
+test_N = 1200  # iters for each test of a parameter
 NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
 LOGGING = False
+MAX_VOLUME = 16.9      # fl-oz
+BOTTLE_H = 0.1905      # m
+BOTTLE_R = 0.03175     # m 
+VOL_TO_MASS = 0.0296   # fl-oz to kg
+PLASTIC_MASS = 0.0127  # kg
+# Source: https://github.com/bulletphysics/bullet3/blob/master/data/kuka_lwr/kuka.urdf
+BASE_LINK_L = 0.130
+L1 = 0
+L2 = 0  # sum of the rest of arm length
+non_base_links = 0
 
 # pybullet_data built-in models
 plane_urdf_filepath = "plane.urdf"
@@ -21,8 +33,8 @@ table_filepath = "table/table.urdf"
 # water bottle 
 class Bottle:
     def __init__(self, table_height):
-        self.radius = 0.03175  # m
-        self.height = 0.1905   # m
+        self.radius = BOTTLE_R  # 0.03175  # m
+        self.height = BOTTLE_H  # 0.1905   # m
         self.mass = 0.5        # kg
         self.start_pos = [0.5, 0, table_height+.3]
         self.start_ori = [0, 0, 0, 1]
@@ -39,12 +51,13 @@ class Arm:
         self.jr = [5.8, 4, 5.8, 4, 5.8, 4, 6]
         #restposes for null space
         # self.rp = [0, 0, 0, 0.5 * math.pi, 0, -math.pi * 0.5 * 0.66, 0]
-        self.rp = [math.pi, math.pi/2, 0, 0, 0, 0, 0]
+        self.rp = [math.pi, 0, 0, (-90)*math.pi/180, 0, 0, 0]
         #joint damping coefficents
         self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
         self.max_force = 20
         self.max_vel = 20
+        self.rot_vel = 20
 
 class Test:
     def __init__(self, bottle_mass, lat_fric, bounce, 
@@ -76,7 +89,7 @@ def run_sim(arm):
     p.setJointMotorControl2(bodyUniqueId=arm.arm_id, 
             jointIndex=0, 
             controlMode=p.VELOCITY_CONTROL,
-            targetVelocity = -20,
+            targetVelocity = -arm.rot_vel,
             force = arm.max_force,
             maxVelocity=arm.max_vel)
     for i in range(test_N):
@@ -85,92 +98,52 @@ def run_sim(arm):
         t = t + 0.01
 
 
-# def run_all_tests():
-#     physics_client = p.connect(p.GUI)  # or p.DIRECT for nongraphical version
+def calc_joints_from_pos(L1, L2, goal_x, goal_y):
+    """
+    Geometric solution to 2-DOF robot arm inverse kinematics.
+    NOTE: goal_x and goal_y must be definied WITH RESPECT TO BASE OF ARM, so
+    provide something like (arm_L, goal_x - base_x, goal_y - base_y)
+    :param arm_L: length of robot arm (in our case, both links same length)
+    :type: float
+    :param goal_x: target x-position of end_effector
+    :type: float
+    :param goal_y: target y-position
+    :type: float
+    :returns (theta0, theta1): two joint angles required for goal position
+    :type: tuple(float, float)
+    """
+    # while desired x, y is out of reach of arm
+    # check if hypotenuse of triangle formed by x and y is > combined arm length
+    theta1 = math.acos((goal_x**2 + goal_y**2 - L1**2 - L2**2) /
+                       (2*L1*L2))
+    theta0 = math.atan2(goal_y, goal_x) - (
+                math.atan2(L2*math.sin(theta1),
+                           L1 + L2*math.cos(theta1)))
+    # simply invert conversion to get radians to degree
+    return (theta0, theta1)
 
-#     # allows you to use pybullet_data package's existing URDF models w/out actually having them
-#     p.setAdditionalSearchPath(pybullet_data.getDataPath())
-#     p.setGravity(0,0,GRAVITY)
-#     planeId = p.loadURDF(plane_urdf_filepath)
 
-#     # table model
-#     table_start_pos = [0, 0, 0]
-#     table_id = p.loadURDF(table_filepath, table_start_pos, useFixedBase=True)
-#     min_table_bounds, max_table_bounds = p.getAABB(table_id)
-#     table_height = max_table_bounds[2]
+def get_arm_dimensions():
+    global L1, L2, non_base_links
+    arm_start_pos = np.array([0, 0, 0])
+    arm_start_ori = p.getQuaternionFromEuler([0, 0, 0])
+    init_arm_id = p.loadURDF(arm_filepath, arm_start_pos, arm_start_ori)
+    init_ang = [math.pi, 0, 0, (-90)*math.pi/180, 0, 0, 0]
+    for i in range(NUM_JOINTS):
+        p.resetJointState(init_arm_id, i, init_ang[i])
 
-#     # robot arm
-#     arm = Arm()
-#     arm_start_pos = [0, 0, table_height]
-#     arm_start_ori = p.getQuaternionFromEuler([0, 0, 0])
-#     arm.arm_id = p.loadURDF(arm_filepath, arm_start_pos, arm_start_ori)
-#     if (p.getNumJoints(arm.arm_id) != NUM_JOINTS):
-#         print("Invalid number of joints. Expected: %d, Actual: %d", NUM_JOINTS, num_joints)
-#         exit()  # undefined
-#     for i in range(numJoints):
-#         p.resetJointState(arm.arm_id, i, [0]*NUM_JOINTS)
-    
-#     # arm sim params
-#     #trailDuration is duration (in seconds) after debug lines will be removed automatically
-#     trailDuration = 5
+    state = p.getLinkState(init_arm_id, END_EFFECTOR_ID)
+    EE_pos = state[0]
 
-#     # jointPoses = p.calculateInverseKinematics(
-#     #     arm_id, END_EFFECTOR_ID, pos, orn, ll, ul, jr, rp)
+    L1 = EE_pos[2] - BASE_LINK_L
+    L2 = (EE_pos[0]**2 + EE_pos[1]**2)**0.5
+    non_base_links = (L1**2 + L2**2)**0.5
+    p.removeBody(init_arm_id)
 
-#     # bottle
-#     bottle = Bottle(table_height)
-#     bottle_col_id = p.createCollisionShape(
-#         shapeType=p.GEOM_CYLINDER,
-#         radius=bottle.radius, 
-#         height=bottle.height)
-
-#     mass_tests = []
-#     lat_friction_tests = []
-#     roll_friction_tests = []
-#     spinning_friction_tests = []
-#     bounciness_tests = [] 
-#     contact_stiffness_tests = []
-#     contact_damping_tests = []
-#     inertia_tests = []  # changes center of mass
-    
-#     all_tests = []  # all test combos
-
-#     running = True
-
-#     for test in all_tests:
-#         bottle_id = p.createMultiBody(
-#             baseMass=bottle.mass, 
-#             baseInertialFramePosition=test.bottle_inertia,
-#             baseCollisionShapeIndex=bottle_col_id,
-#             basePosition=bottle.start_pos)
-#         p.changeDynamics(
-#             bodyUniqueId=bottle_id, 
-#             linkIndex=BASE_ID, 
-#             mass=test.bottle_mass,
-#             lateralFriction=test.lat_fric,
-#             spinningFriction=test.spin_fric,
-#             rollingFriction=test.roll_fric,
-#             restitution=test.bounce,
-#             contactStiffness=test.contact_stiffness,
-#             contactDamping=test.contact_dampness)
-
-#         run_sim(arm)
-
-#         # check if bottle fell over
-#         cube_pos, cube_ori = p.getBasePositionAndOrientation(bottle_id)
-#         is_fallen = check_is_fallen(cube_pos, cube_ori)
-#         if is_fallen: 
-#             # TODO: Mark in some table, true
-#             print("fell over")
-
-#         # remove bottle to not interfere with next test
-#         p.removeBody(bottle_id)
-        
-#         # reset other components of simulation
-#         reset_arm(arm_id=arm_id, pos=arm_start_pos, ori=arm_start_ori)
-
-    
-#     p.disconnect()
+# maximize x distance, or equivalently minimize negative x
+# def min_neg_x(theta2, y):
+#     global L1, L2
+#     return -1*L1*math.cos(math.asin((y - L2*math.sin(theta2)/L1)))
 
 
 def test_diff_factors():
@@ -192,10 +165,12 @@ def test_diff_factors():
 
     # robot arm
     arm = Arm()
-    arm_start_pos = [0, 0, table_height]
+    arm_start_pos = np.array([-0.25, 0, table_height])
     arm_start_ori = p.getQuaternionFromEuler([0, 0, 0])
+    pos = arm_start_pos 
+
+    get_arm_dimensions()
     
-    # arm sim params
     #trailDuration is duration (in seconds) after debug lines will be removed automatically
     trailDuration = 5
 
@@ -205,6 +180,13 @@ def test_diff_factors():
         shapeType=p.GEOM_CYLINDER,
         radius=bottle.radius, 
         height=bottle.height)
+
+    arm_rot_vels = np.arange(0, 20+1, 2)  # 0, 2, 4, ... 20 m/s
+    contact_heights = np.arange(0, bottle.height, bottle.height/5)  # 5 different contact heights evenly spread
+    fill_prop = [0, 1]  # maps to mass of bottle
+    lat_fric = [0.25, 0.4]
+    restitution = [0.5, 0.75]
+    # contact_width
 
     for i in range(5):
 
@@ -232,6 +214,20 @@ def test_diff_factors():
             # contactDamping=test.contact_dampness)
         )
 
+        target_z = contact_heights[-1] - BASE_LINK_L # subtracted base link length
+        best_sol = None
+        possible = np.arange(start=(L1 + L2), stop=0, step=(L1+L2)/20)
+        for target_y in possible:
+            try:
+
+        theta2 = res.x
+        target_y = res.fun
+        theta1 = calc_joints_from_pos(L1, L2, theta2, target_y, target_z)
+        print(theta1)
+        exit()
+        # jointPoses = p.calculateInverseKinematics(arm.arm_id, END_EFFECTOR_ID, pos, orn, ll, ul,
+        #                                           jr, rp)
+
         arm.arm_id = p.loadURDF(arm_filepath, arm_start_pos, arm_start_ori)
         for i in range(NUM_JOINTS):
             p.resetJointState(arm.arm_id, i, arm.rp[i])
@@ -239,7 +235,7 @@ def test_diff_factors():
         print(i)
         run_sim(arm)
 
-        # p.removeBody(bottle_id)
+        p.removeBody(bottle_id)
         p.removeBody(arm.arm_id)
             
         # reset other components of simulation
