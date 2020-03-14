@@ -17,6 +17,7 @@ WATER_DENSITY = 997    # kg/m³
 BOTTLE_H = 0.1905      # m
 BOTTLE_R = 0.03175     # m 
 VOL_TO_MASS = 0.0296   # fl-oz to kg
+FULL_WATER_MASS = MAX_VOLUME * VOL_TO_MASS
 PLASTIC_MASS = 0.0127  # kg
 # Source: https://github.com/bulletphysics/bullet3/blob/master/data/kuka_lwr/kuka.urdf
 BASE_LINK_L = 0.130
@@ -53,7 +54,7 @@ class Arm:
         self.jr = [5.8, 4, 5.8, 4, 5.8, 4, 6]
         #restposes for null space
         # self.rp = [0, 0, 0, 0.5 * math.pi, 0, -math.pi * 0.5 * 0.66, 0]
-        self.rp = [math.pi, 0, 0, (-90)*math.pi/180, 0, 0, 0]
+        self.rp = [math.pi, (90 + 15)*math.pi/180, 0, 0, 0, 0, 0]
         #joint damping coefficents
         self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
@@ -80,15 +81,6 @@ def reset_arm(arm_id, pos, ori):
         posObj=pos,
         ornObj=ori)
     
-
-def rotate_arm():
-    return
-
-
-def change_arm_params():
-    return
-
-
 def run_sim(arm):
     t = 0
     p.setJointMotorControl2(bodyUniqueId=arm.arm_id, 
@@ -199,17 +191,16 @@ def test_diff_factors():
 
 
 def test_distance_moved(bottle, arm):
-
     lat_frics = np.arange(start=0.25, stop=(0.4+0.05), step=0.05)
     fill_props = np.arange(start=0, stop=(1+0.25), step=0.25)
     arm_rot_vels = np.arange(start=0, stop=(20+2), step=2)  # 0, 2, 4, ... 20 m/s
-    contact_heights = np.arange(0, bottle.height, bottle.height/5)
+    contact_heights = np.arange(0, bottle.height + bottle.height/5, bottle.height/5)
     full_bottle_mass = PLASTIC_MASS + MAX_VOLUME * VOL_TO_MASS
 
     # for each fill proportion, test lateral friction and arm velocity separately
     for fill_i in range(len(fill_props)):
         fill_p = fill_props[fill_i]
-        bottle_mass = full_bottle_mass * fill_p
+        bottle_mass = PLASTIC_MASS + (FULL_WATER_MASS * fill_p)
 
         for fric_i in range(len(lat_frics)):
             lat_f = lat_frics[fric_i]
@@ -224,22 +215,9 @@ def test_distance_moved(bottle, arm):
                 lateralFriction=lat_f
             )
 
-            target_z = contact_heights[fric_i] - BASE_LINK_L # subtracted base link length
-            theta1, theta2 = None, None
-            possible_y = np.arange(start=(L1 + L2), stop=0, step=-1*(L1+L2)/20)
-            for target_y in possible_y:
-                try:
-                    theta1, theta2 = calc_joints_from_pos(L1, L2, goal_x=target_y, goal_y=target_z)
-                    break
-                except Exception:
-                    continue
-            
-            print(theta1*180/math.pi, theta2*180/math.pi)
-            new_pos = [math.pi, theta1, 0, theta2, 0, 0, 0]
-
             arm.arm_id = p.loadURDF(arm_filepath, arm.start_pos, arm.start_ori)
             for joint_i in range(NUM_JOINTS):
-                p.resetJointState(arm.arm_id, joint_i, new_pos[joint_i])
+                p.resetJointState(arm.arm_id, joint_i, arm.rp[joint_i])
 
             run_sim(arm)
 
@@ -250,6 +228,24 @@ def test_distance_moved(bottle, arm):
             # reset_arm(arm_id=arm.arm_id, pos=arm_start_pos, ori=arm_start_ori)
             if LOGGING:
                 p.stopStateLogging(log_id)
+
+
+def get_target_joint_pos(contact_heights):
+    joint_poses = []
+    for contact_height in contact_heights:
+        target_z = contact_height - BASE_LINK_L # subtracted base link length
+        theta1, theta2 = None, None
+        possible_y = np.arange(start=(L1 + L2), stop=0, step=-1*(L1+L2)/20)
+        for target_y in possible_y:
+            try:
+                theta1, theta2 = calc_joints_from_pos(L1, L2, goal_x=target_y, goal_y=target_z)
+                break
+            except Exception:
+                continue
+        new_pos = [math.pi, math.pi/2 - theta1, 0, theta2, 0, 0, 0]
+        joint_poses.append(new_pos)
+
+    return joint_poses
 
 
 def main():
