@@ -13,6 +13,7 @@ NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
 LOGGING = False
 MAX_VOLUME = 16.9      # fl-oz
+WATER_DENSITY = 997    # kg/m³
 BOTTLE_H = 0.1905      # m
 BOTTLE_R = 0.03175     # m 
 VOL_TO_MASS = 0.0296   # fl-oz to kg
@@ -38,9 +39,10 @@ class Bottle:
         self.mass = 0.5        # kg
         self.start_pos = [0.5, 0, table_height+.3]
         self.start_ori = [0, 0, 0, 1]
+        self.col_id = None
 
 class Arm:
-    def __init__(self):
+    def __init__(self, start_pos, start_ori):
         # NOTE: taken from example: 
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
         #lower limits for null space
@@ -58,6 +60,9 @@ class Arm:
         self.max_force = 20
         self.max_vel = 20
         self.rot_vel = 20
+
+        self.start_pos = start_pos
+        self.start_ori = start_ori
 
 class Test:
     def __init__(self, bottle_mass, lat_fric, bounce, 
@@ -137,6 +142,7 @@ def get_arm_dimensions():
 
     L1 = EE_pos[2] - BASE_LINK_L
     L2 = (EE_pos[0]**2 + EE_pos[1]**2)**0.5
+    print("Link lengths: ", L1, L2)
     non_base_links = (L1**2 + L2**2)**0.5
     p.removeBody(init_arm_id)
 
@@ -164,10 +170,8 @@ def test_diff_factors():
     table_height = max_table_bounds[2]
 
     # robot arm
-    arm = Arm()
-    arm_start_pos = np.array([-0.25, 0, table_height])
-    arm_start_ori = p.getQuaternionFromEuler([0, 0, 0])
-    pos = arm_start_pos 
+    arm = Arm(start_pos=np.array([-0.25, 0, table_height]),
+        start_ori=p.getQuaternionFromEuler([0, 0, 0]))
 
     get_arm_dimensions()
     
@@ -176,74 +180,76 @@ def test_diff_factors():
 
     # bottle
     bottle = Bottle(table_height)
-    bottle_col_id = p.createCollisionShape(
+    bottle.col_id = p.createCollisionShape(
         shapeType=p.GEOM_CYLINDER,
         radius=bottle.radius, 
         height=bottle.height)
 
     arm_rot_vels = np.arange(0, 20+1, 2)  # 0, 2, 4, ... 20 m/s
     contact_heights = np.arange(0, bottle.height, bottle.height/5)  # 5 different contact heights evenly spread
-    fill_prop = [0, 1]  # maps to mass of bottle
-    lat_fric = [0.25, 0.4]
-    restitution = [0.5, 0.75]
+    fill_props = np.arange(0, 1+0.1, 0.25)  # maps to mass of bottle
+    lat_frics = np.arange(0.25, 0.4, 0.05)
+    # restitution = [0.5, 0.75]
     # contact_width
 
-    for i in range(5):
-
-        test = Test(
-            bottle_mass = 1,  #kg
-            lat_fric = 0.25,  # static friction
-            bounce = 0.5, 
-            contact_stiffness = 1, 
-            contact_dampness = 1, 
-            bottle_inertia = [0, 0, 0]
-        )
-
-        bottle_id = p.createMultiBody(
-            baseMass=bottle.mass, 
-            baseInertialFramePosition=test.bottle_inertia,
-            baseCollisionShapeIndex=bottle_col_id,
-            basePosition=bottle.start_pos)
-        p.changeDynamics(
-            bodyUniqueId=bottle_id, 
-            linkIndex=BASE_ID, 
-            # mass=test.bottle_mass,
-            lateralFriction=test.lat_fric,
-            # restitution=test.bounce,
-            # contactStiffness=test.contact_stiffness,
-            # contactDamping=test.contact_dampness)
-        )
-
-        target_z = contact_heights[-1] - BASE_LINK_L # subtracted base link length
-        best_sol = None
-        possible = np.arange(start=(L1 + L2), stop=0, step=(L1+L2)/20)
-        for target_y in possible:
-            try:
-
-        theta2 = res.x
-        target_y = res.fun
-        theta1 = calc_joints_from_pos(L1, L2, theta2, target_y, target_z)
-        print(theta1)
-        exit()
-        # jointPoses = p.calculateInverseKinematics(arm.arm_id, END_EFFECTOR_ID, pos, orn, ll, ul,
-        #                                           jr, rp)
-
-        arm.arm_id = p.loadURDF(arm_filepath, arm_start_pos, arm_start_ori)
-        for i in range(NUM_JOINTS):
-            p.resetJointState(arm.arm_id, i, arm.rp[i])
-
-        print(i)
-        run_sim(arm)
-
-        p.removeBody(bottle_id)
-        p.removeBody(arm.arm_id)
-            
-        # reset other components of simulation
-        # reset_arm(arm_id=arm.arm_id, pos=arm_start_pos, ori=arm_start_ori)
-        if LOGGING:
-            p.stopStateLogging(log_id)
+    # distance moved
+    test_distance_moved(bottle, arm)
 
     p.disconnect()
+
+
+def test_distance_moved(bottle, arm):
+
+    lat_frics = np.arange(start=0.25, stop=(0.4+0.05), step=0.05)
+    fill_props = np.arange(start=0, stop=(1+0.25), step=0.25)
+    arm_rot_vels = np.arange(start=0, stop=(20+2), step=2)  # 0, 2, 4, ... 20 m/s
+    contact_heights = np.arange(0, bottle.height, bottle.height/5)
+    full_bottle_mass = PLASTIC_MASS + MAX_VOLUME * VOL_TO_MASS
+
+    # for each fill proportion, test lateral friction and arm velocity separately
+    for fill_i in range(len(fill_props)):
+        fill_p = fill_props[fill_i]
+        bottle_mass = full_bottle_mass * fill_p
+
+        for fric_i in range(len(lat_frics)):
+            lat_f = lat_frics[fric_i]
+
+            bottle_id = p.createMultiBody(
+                baseMass=bottle_mass, 
+                baseCollisionShapeIndex=bottle.col_id,
+                basePosition=bottle.start_pos)
+            p.changeDynamics(
+                bodyUniqueId=bottle_id, 
+                linkIndex=BASE_ID, 
+                lateralFriction=lat_f
+            )
+
+            target_z = contact_heights[fric_i] - BASE_LINK_L # subtracted base link length
+            theta1, theta2 = None, None
+            possible_y = np.arange(start=(L1 + L2), stop=0, step=-1*(L1+L2)/20)
+            for target_y in possible_y:
+                try:
+                    theta1, theta2 = calc_joints_from_pos(L1, L2, goal_x=target_y, goal_y=target_z)
+                    break
+                except Exception:
+                    continue
+            
+            print(theta1*180/math.pi, theta2*180/math.pi)
+            new_pos = [math.pi, theta1, 0, theta2, 0, 0, 0]
+
+            arm.arm_id = p.loadURDF(arm_filepath, arm.start_pos, arm.start_ori)
+            for joint_i in range(NUM_JOINTS):
+                p.resetJointState(arm.arm_id, joint_i, new_pos[joint_i])
+
+            run_sim(arm)
+
+            p.removeBody(bottle_id)
+            p.removeBody(arm.arm_id)
+                
+            # reset other components of simulation
+            # reset_arm(arm_id=arm.arm_id, pos=arm_start_pos, ori=arm_start_ori)
+            if LOGGING:
+                p.stopStateLogging(log_id)
 
 
 def main():
