@@ -6,9 +6,9 @@ import numpy as np
 # from scipy.optimize import minimize
 
 GRAVITY = -9.81
-BASE_ID = -1
+BASE_ID = 0
 N = 10000  # total simulation iterations
-test_N = 1200  # iters for each test of a parameter
+SIM_RUNTIME = 800  # iters for each test of a parameter
 NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
 LOGGING = False
@@ -20,10 +20,12 @@ VOL_TO_MASS = 0.0296   # fl-oz to kg
 FULL_WATER_MASS = MAX_VOLUME * VOL_TO_MASS
 PLASTIC_MASS = 0.0127  # kg
 # Source: https://github.com/bulletphysics/bullet3/blob/master/data/kuka_lwr/kuka.urdf
-BASE_LINK_L = 0.130
+BASE_LINK_L = 0.35
+FINAL_ARM_POS = (5 * math.pi / 180)
 L1 = 0
 L2 = 0  # sum of the rest of arm length
 non_base_links = 0
+table_height = 0
 
 # pybullet_data built-in models
 plane_urdf_filepath = "plane.urdf"
@@ -38,7 +40,7 @@ class Bottle:
         self.radius = BOTTLE_R  # 0.03175  # m
         self.height = BOTTLE_H  # 0.1905   # m
         self.mass = 0.5        # kg
-        self.start_pos = [0.5, 0, table_height+.3]
+        self.start_pos = [0.5, 0, table_height+.1]
         self.start_ori = [0, 0, 0, 1]
         self.col_id = None
 
@@ -54,13 +56,13 @@ class Arm:
         self.jr = [5.8, 4, 5.8, 4, 5.8, 4, 6]
         #restposes for null space
         # self.rp = [0, 0, 0, 0.5 * math.pi, 0, -math.pi * 0.5 * 0.66, 0]
-        self.rp = [math.pi, (90 + 15)*math.pi/180, 0, 0, 0, 0, 0]
+        self.rp = [math.pi/4, (90 + 15)*math.pi/180, 0, 0, 0, 0, 0]
         #joint damping coefficents
         self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
-        self.max_force = 20
-        self.max_vel = 20
-        self.rot_vel = 20
+        self.max_force = 100000  # allow instantenous velocity = target velocity
+        self.max_vel = 2*math.pi/16  # angular velocity
+        self.rot_vel = self.max_vel
 
         self.start_pos = start_pos
         self.start_ori = start_ori
@@ -81,16 +83,24 @@ def reset_arm(arm_id, pos, ori):
         posObj=pos,
         ornObj=ori)
     
-def run_sim(arm):
+def run_sim(arm, duration=SIM_RUNTIME):
     t = 0
     p.setJointMotorControl2(bodyUniqueId=arm.arm_id, 
-            jointIndex=0, 
+            jointIndex=BASE_ID, 
             controlMode=p.VELOCITY_CONTROL,
-            targetVelocity = -arm.rot_vel,
-            force = arm.max_force,
-            maxVelocity=arm.max_vel)
-    for i in range(test_N):
+            targetVelocity=-arm.rot_vel,
+            force = arm.max_force)
+    move_arm = True
+    for i in range(duration):
         p.stepSimulation()
+        base_joint_pos = p.getJointState(bodyUniqueId=arm.arm_id, jointIndex=BASE_ID)
+        if move_arm and base_joint_pos[0] <= FINAL_ARM_POS:
+            move_arm = False
+            p.setJointMotorControl2(bodyUniqueId=arm.arm_id, 
+                jointIndex=BASE_ID, 
+                controlMode=p.VELOCITY_CONTROL,
+                targetVelocity=0,
+                force = arm.max_force)
         time.sleep(1./240.)
         t = t + 0.01
 
@@ -130,11 +140,10 @@ def get_arm_dimensions():
         p.resetJointState(init_arm_id, i, init_ang[i])
 
     state = p.getLinkState(init_arm_id, END_EFFECTOR_ID)
-    EE_pos = state[0]
+    EE_pos = state[0]  # world frame
 
     L1 = EE_pos[2] - BASE_LINK_L
     L2 = (EE_pos[0]**2 + EE_pos[1]**2)**0.5
-    print("Link lengths: ", L1, L2)
     non_base_links = (L1**2 + L2**2)**0.5
     p.removeBody(init_arm_id)
 
@@ -145,6 +154,7 @@ def get_arm_dimensions():
 
 
 def test_diff_factors():
+    global table_height
     physics_client = p.connect(p.GUI)  # or p.DIRECT for nongraphical version
 
     # allows you to use pybullet_data package's existing URDF models w/out actually having them
@@ -177,49 +187,63 @@ def test_diff_factors():
         radius=bottle.radius, 
         height=bottle.height)
 
-    arm_rot_vels = np.arange(0, 20+1, 2)  # 0, 2, 4, ... 20 m/s
-    contact_heights = np.arange(0, bottle.height, bottle.height/5)  # 5 different contact heights evenly spread
-    fill_props = np.arange(0, 1+0.1, 0.25)  # maps to mass of bottle
-    lat_frics = np.arange(0.25, 0.4, 0.05)
-    # restitution = [0.5, 0.75]
-    # contact_width
-
     # distance moved
-    test_distance_moved(bottle, arm)
+    test_friction_fill_proportion(bottle, arm)
 
     p.disconnect()
 
 
-def test_distance_moved(bottle, arm):
+def test_contact_height_fill_proportion(bottle, arm):
+    contact_heights = np.arange(0, bottle.height + bottle.height/5, bottle.height/5)
+
+
+def test_arm_speed_fill_proportion(bottle, arm):
+    arm_rot_vels = np.arange(start=0, stop=(20+2), step=2)  # 0, 2, 4, ... 20 m/s
+
+
+def euc_dist_horiz(p1, p2):
+    x1, y1, z1 = p1
+    x2, y2, z2 = p2
+    return ((x1-x2)**2 + (y1-y2)**2)**0.5
+
+
+def test_friction_fill_proportion(bottle, arm):
     lat_frics = np.arange(start=0.25, stop=(0.4+0.05), step=0.05)
     fill_props = np.arange(start=0, stop=(1+0.25), step=0.25)
-    arm_rot_vels = np.arange(start=0, stop=(20+2), step=2)  # 0, 2, 4, ... 20 m/s
-    contact_heights = np.arange(0, bottle.height + bottle.height/5, bottle.height/5)
-    full_bottle_mass = PLASTIC_MASS + MAX_VOLUME * VOL_TO_MASS
+    bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
+
+    # have arm hit center of bottle
+    print(bottle.height, BASE_LINK_L)
+    default_joint_pos = get_target_joint_pos(arm, [bottle.height/2])[0]
+
+    # Store results
+    dist_increments = [0, 1, 2, 3, 4, 5]  # cm
+    dist_counts = [0] * len(dist_increments)
 
     # for each fill proportion, test lateral friction and arm velocity separately
-    for fill_i in range(len(fill_props)):
-        fill_p = fill_props[fill_i]
-        bottle_mass = PLASTIC_MASS + (FULL_WATER_MASS * fill_p)
-
-        for fric_i in range(len(lat_frics)):
-            lat_f = lat_frics[fric_i]
-
+    for bottle_mass in bottle_masses:
+        for lat_fric in lat_frics:
             bottle_id = p.createMultiBody(
-                baseMass=bottle_mass, 
+                baseMass=bottle_mass,
                 baseCollisionShapeIndex=bottle.col_id,
                 basePosition=bottle.start_pos)
             p.changeDynamics(
                 bodyUniqueId=bottle_id, 
-                linkIndex=BASE_ID, 
-                lateralFriction=lat_f
+                linkIndex=-1,  # no links, -1 refers to bottle base
+                lateralFriction=lat_fric
             )
 
             arm.arm_id = p.loadURDF(arm_filepath, arm.start_pos, arm.start_ori)
             for joint_i in range(NUM_JOINTS):
-                p.resetJointState(arm.arm_id, joint_i, arm.rp[joint_i])
+                p.resetJointState(arm.arm_id, joint_i, default_joint_pos[joint_i])
 
             run_sim(arm)
+
+            bottle_pos, bottle_ori = p.getBasePositionAndOrientation(bottle_id)
+            dist = euc_dist_horiz(bottle_pos, bottle.start_pos)
+            nearest_dist = int(round(dist))
+            if nearest_dist > 5: nearest_dist = 5
+            dist_counts[nearest_dist] += 1
 
             p.removeBody(bottle_id)
             p.removeBody(arm.arm_id)
@@ -230,10 +254,22 @@ def test_distance_moved(bottle, arm):
                 p.stopStateLogging(log_id)
 
 
-def get_target_joint_pos(contact_heights):
+    x_ind = dist_increments
+    plt.xticks(dist_increments)
+    plt.yticks(dist_counts)
+    plt.bar(dist_increments, dist_counts)
+    plt.xlabel('Distance moved (cm)')
+    plt.ylabel('Tally of occurences')
+    plt.title('Number of Times distance moved v.s friction and fill proportions')
+    plt.show()
+
+
+
+def get_target_joint_pos(arm, contact_heights):
     joint_poses = []
     for contact_height in contact_heights:
         target_z = contact_height - BASE_LINK_L # subtracted base link length
+        print(target_z)
         theta1, theta2 = None, None
         possible_y = np.arange(start=(L1 + L2), stop=0, step=-1*(L1+L2)/20)
         for target_y in possible_y:
@@ -242,7 +278,9 @@ def get_target_joint_pos(contact_heights):
                 break
             except Exception:
                 continue
-        new_pos = [math.pi, math.pi/2 - theta1, 0, theta2, 0, 0, 0]
+        new_pos = arm.rp
+        new_pos[1] = math.pi/2 - theta1
+        new_pos[3] = theta2
         joint_poses.append(new_pos)
 
     return joint_poses
