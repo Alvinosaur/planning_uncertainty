@@ -3,12 +3,14 @@ import time
 import pybullet_data
 import math
 import numpy as np
+from matplotlib import pyplot as plt
 # from scipy.optimize import minimize
 
+VISUALIZE = False
 GRAVITY = -9.81
 BASE_ID = 0
-N = 10000  # total simulation iterations
 SIM_RUNTIME = 800  # iters for each test of a parameter
+SIM_VIZ_FREQ = 1./240.
 NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
 LOGGING = False
@@ -22,6 +24,7 @@ PLASTIC_MASS = 0.0127  # kg
 # Source: https://github.com/bulletphysics/bullet3/blob/master/data/kuka_lwr/kuka.urdf
 BASE_LINK_L = 0.35
 FINAL_ARM_POS = (5 * math.pi / 180)
+M_TO_CM = 100
 L1 = 0
 L2 = 0  # sum of the rest of arm length
 non_base_links = 0
@@ -101,8 +104,7 @@ def run_sim(arm, duration=SIM_RUNTIME):
                 controlMode=p.VELOCITY_CONTROL,
                 targetVelocity=0,
                 force = arm.max_force)
-        time.sleep(1./240.)
-        t = t + 0.01
+        if VISUALIZE: time.sleep(SIM_VIZ_FREQ)
 
 
 def calc_joints_from_pos(L1, L2, goal_x, goal_y):
@@ -155,7 +157,8 @@ def get_arm_dimensions():
 
 def test_diff_factors():
     global table_height
-    physics_client = p.connect(p.GUI)  # or p.DIRECT for nongraphical version
+    if VISUALIZE: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
+    else: p.connect(p.DIRECT)
 
     # allows you to use pybullet_data package's existing URDF models w/out actually having them
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -208,17 +211,17 @@ def euc_dist_horiz(p1, p2):
 
 
 def test_friction_fill_proportion(bottle, arm):
-    lat_frics = np.arange(start=0.25, stop=(0.4+0.05), step=0.05)
+    lat_frics = np.arange(start=0.1, stop=(0.2), step=0.01)
     fill_props = np.arange(start=0, stop=(1+0.25), step=0.25)
     bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
 
     # have arm hit center of bottle
-    print(bottle.height, BASE_LINK_L)
     default_joint_pos = get_target_joint_pos(arm, [bottle.height/2])[0]
 
     # Store results
-    dist_increments = [0, 1, 2, 3, 4, 5]  # cm
-    dist_counts = [0] * len(dist_increments)
+    dist_bins = np.arange(start=0, stop=20+4, step=4)  # cm
+    print(dist_bins)
+    dist_counts = [0] * len(dist_bins)
 
     # for each fill proportion, test lateral friction and arm velocity separately
     for bottle_mass in bottle_masses:
@@ -240,10 +243,10 @@ def test_friction_fill_proportion(bottle, arm):
             run_sim(arm)
 
             bottle_pos, bottle_ori = p.getBasePositionAndOrientation(bottle_id)
-            dist = euc_dist_horiz(bottle_pos, bottle.start_pos)
-            nearest_dist = int(round(dist))
-            if nearest_dist > 5: nearest_dist = 5
-            dist_counts[nearest_dist] += 1
+            dist = euc_dist_horiz(bottle_pos, bottle.start_pos) * M_TO_CM
+            nearest_bin = find_nearest_bin(dist, dist_bins)
+            print(dist, nearest_bin)
+            dist_counts[nearest_bin] += 1
 
             p.removeBody(bottle_id)
             p.removeBody(arm.arm_id)
@@ -254,10 +257,10 @@ def test_friction_fill_proportion(bottle, arm):
                 p.stopStateLogging(log_id)
 
 
-    x_ind = dist_increments
-    plt.xticks(dist_increments)
+    x_ind = dist_bins
+    plt.xticks(dist_bins)
     plt.yticks(dist_counts)
-    plt.bar(dist_increments, dist_counts)
+    plt.bar(dist_bins, dist_counts)
     plt.xlabel('Distance moved (cm)')
     plt.ylabel('Tally of occurences')
     plt.title('Number of Times distance moved v.s friction and fill proportions')
@@ -265,11 +268,15 @@ def test_friction_fill_proportion(bottle, arm):
 
 
 
+def find_nearest_bin(dist, targets):
+    diff = abs(targets - dist)
+    return np.argmin(diff)
+
+
 def get_target_joint_pos(arm, contact_heights):
     joint_poses = []
     for contact_height in contact_heights:
         target_z = contact_height - BASE_LINK_L # subtracted base link length
-        print(target_z)
         theta1, theta2 = None, None
         possible_y = np.arange(start=(L1 + L2), stop=0, step=-1*(L1+L2)/20)
         for target_y in possible_y:
