@@ -14,7 +14,7 @@ def plot_distrib(horiz_bins, vert_bins, xlabel, ylabel, title):
     plt.ylabel(ylabel)
     plt.title(title)
     plt.show()
-    plt.clf()
+    plt.close()
 
 
 def find_nearest_bin(dist, targets):

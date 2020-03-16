@@ -8,6 +8,7 @@ import numpy as np
 import helpers
 from sim_objects import Bottle, Arm
 
+TEST_ID = 2  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
 VISUALIZE = True
 GRAVITY = -9.81
 BASE_ID = 0
@@ -15,7 +16,7 @@ SIM_RUNTIME = 2000  # iters for each test of a parameter
 SIM_VIZ_FREQ = 1./240.
 NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
-LOGGING = False
+LOGGING = True
 MAX_VOLUME = 16.9      # fl-oz
 WATER_DENSITY = 997    # kg/m³
 BOTTLE_H = 0.1905      # m
@@ -27,10 +28,12 @@ PLASTIC_MASS = 0.0127  # kg
 BASE_LINK_L = 0.35
 FINAL_ARM_POS = (5 * math.pi / 180)
 M_TO_CM = 100
+MAX_DIST = 140  # for graphing distribution
 L1 = 0
 L2 = 0  # sum of the rest of arm length
 non_base_links = 0
 table_height = 0
+log_id = -1
 
 # pybullet_data built-in models
 plane_urdf_filepath = "plane.urdf"
@@ -135,11 +138,9 @@ def test_contact_height_fill_proportion(bottle, arm):
 
             p.removeBody(bottle.bottle_id)
             p.removeBody(arm.arm_id)
-                
-            # reset other components of simulation
-            # reset_arm(arm_id=arm.arm_id, pos=arm_start_pos, ori=arm_start_ori)
-            if LOGGING:
-                p.stopStateLogging(log_id)
+
+    if LOGGING and VISUALIZE:
+        p.stopStateLogging(log_id)
 
     helpers.plot_distrib(horiz_bins=horiz_bins, vert_bins=fall_counts,
         xlabel='Contact Height Percent of Total Height', ylabel='Fall Count',
@@ -155,7 +156,7 @@ def test_arm_speed_fill_proportion(bottle, arm):
     default_joint_pos = helpers.get_target_joint_pos(arm, [bottle.height/2], L1, L2, BASE_LINK_L)[0]
 
     # Store results
-    dist_bins = np.arange(start=0, stop=20+4, step=4)  # cm
+    dist_bins = np.arange(start=0, stop=MAX_DIST+4, step=4)  # cm
     dist_counts = [0] * len(dist_bins)
 
     # for each fill proportion, test lateral friction and arm velocity separately
@@ -187,11 +188,9 @@ def test_arm_speed_fill_proportion(bottle, arm):
 
             p.removeBody(bottle.bottle_id)
             p.removeBody(arm.arm_id)
-                
-            # reset other components of simulation
-            # reset_arm(arm_id=arm.arm_id, pos=arm_start_pos, ori=arm_start_ori)
-            if LOGGING:
-                p.stopStateLogging(log_id)
+
+    if LOGGING and VISUALIZE:
+        p.stopStateLogging(log_id)
 
     helpers.plot_distrib(horiz_bins=dist_bins, vert_bins=dist_counts,
         xlabel='Distance moved (cm)', ylabel='Tally of Occurences',
@@ -207,7 +206,7 @@ def test_friction_fill_proportion(bottle, arm):
     default_joint_pos = helpers.get_target_joint_pos(arm, [bottle.height/2], L1, L2, BASE_LINK_L)[0]
 
     # Store results
-    dist_bins = np.arange(start=0, stop=20+4, step=4)  # cm
+    dist_bins = np.arange(start=0, stop=MAX_DIST+4, step=4)  # cm
     dist_counts = [0] * len(dist_bins)
 
     # for each fill proportion, test lateral friction and arm velocity separately
@@ -237,8 +236,8 @@ def test_friction_fill_proportion(bottle, arm):
             p.removeBody(bottle.bottle_id)
             p.removeBody(arm.arm_id)
 
-            if LOGGING:
-                p.stopStateLogging(log_id)
+    if LOGGING and VISUALIZE:
+        p.stopStateLogging(log_id)
 
     helpers.plot_distrib(horiz_bins=dist_bins, vert_bins=dist_counts,
         xlabel='Distance moved (cm)', ylabel='Tally of Occurences',
@@ -246,7 +245,7 @@ def test_friction_fill_proportion(bottle, arm):
 
 
 def test_diff_factors():
-    global table_height
+    global table_height, log_id
     if VISUALIZE: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
     else: p.connect(p.DIRECT)
 
@@ -254,43 +253,45 @@ def test_diff_factors():
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.setGravity(0,0,GRAVITY)
     planeId = p.loadURDF(plane_urdf_filepath)
-    log_id = -1
-    if LOGGING:
-        log_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "result.mp4")
 
     # table model
-    table_start_pos = [0, 0, 0]
-    table_id = p.loadURDF(table_filepath, table_start_pos, useFixedBase=True)
-    min_table_bounds, max_table_bounds = p.getAABB(table_id)
-    table_height = max_table_bounds[2]
+    # table_start_pos = [0, 0, 0]
+    # table_id = p.loadURDF(table_filepath, table_start_pos, useFixedBase=True)
+    # min_table_bounds, max_table_bounds = p.getAABB(table_id)
+    # table_height = max_table_bounds[2]
 
     # robot arm
-    arm = Arm(start_pos=np.array([-0.25, 0, table_height]),
+    arm = Arm(start_pos=np.array([-0.25, 0, 0]),
         start_ori=p.getQuaternionFromEuler([0, 0, 0]))
     get_arm_dimensions()
 
     # bottle
-    bottle = Bottle(table_height, BOTTLE_R, BOTTLE_H)
+    bottle = Bottle(0, BOTTLE_R, BOTTLE_H)
     bottle.col_id = p.createCollisionShape(
         shapeType=p.GEOM_CYLINDER,
         radius=bottle.radius, 
         height=bottle.height)
 
-    # distance moved, friction, bottle mass
-    # test_friction_fill_proportion(bottle, arm)
+    if LOGGING and VISUALIZE:
+        log_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "result_test_{}.mp4".format(TEST_ID))
 
-    # distance moved, arm rotation velocity, mass
-    test_arm_speed_fill_proportion(bottle, arm)
+    # NOTE: DO NOT RUN MULTIPLE TESTS IN ONE SCRIPT, PLOTS GET MESSED UP
+    if TEST_ID == 0:
+        # topple frequency, contact height, mass
+        test_contact_height_fill_proportion(bottle, arm)
+    
+    elif TEST_ID == 1:
+        # distance moved, arm rotation velocity, mass
+        test_arm_speed_fill_proportion(bottle, arm)
 
-    # topple frequency, contact height, mass
-    test_contact_height_fill_proportion(bottle, arm)
+    else:  # TEST_ID == 2
+        # distance moved, friction, bottle mass
+        test_friction_fill_proportion(bottle, arm)
 
     p.disconnect()
 
 if __name__ == '__main__':
     test_diff_factors()
-
-
 
     # cpu parallell pybullet
     # ODE physics engine
