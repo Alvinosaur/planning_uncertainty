@@ -8,15 +8,15 @@ import numpy as np
 import helpers
 from sim_objects import Bottle, Arm
 
-TEST_ID = 2  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
-VISUALIZE = True
+TEST_ID = 0  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
+VISUALIZE = False
 GRAVITY = -9.81
 BASE_ID = 0
 SIM_RUNTIME = 2000  # iters for each test of a parameter
 SIM_VIZ_FREQ = 1./240.
 NUM_JOINTS = 7
 END_EFFECTOR_ID = 6
-LOGGING = True
+LOGGING = False
 MAX_VOLUME = 16.9      # fl-oz
 WATER_DENSITY = 997    # kg/m³
 BOTTLE_H = 0.1905      # m
@@ -28,7 +28,7 @@ PLASTIC_MASS = 0.0127  # kg
 BASE_LINK_L = 0.35
 FINAL_ARM_POS = (5 * math.pi / 180)
 M_TO_CM = 100
-MAX_DIST = 140  # for graphing distribution
+MAX_DIST = 44  # for graphing distribution
 L1 = 0
 L2 = 0  # sum of the rest of arm length
 non_base_links = 0
@@ -97,14 +97,15 @@ def get_arm_dimensions():
 
     L1 = EE_pos[2] - BASE_LINK_L
     L2 = (EE_pos[0]**2 + EE_pos[1]**2)**0.5
+
     non_base_links = (L1**2 + L2**2)**0.5
     p.removeBody(init_arm_id)
 
 
 def test_contact_height_fill_proportion(bottle, arm):
-    contact_heights = np.arange(0, bottle.height + bottle.height/10, bottle.height/5)
+    contact_heights = np.arange(0, bottle.height + bottle.height/20, bottle.height/20)
     joint_poses = helpers.get_target_joint_pos(arm, contact_heights, L1, L2, BASE_LINK_L)
-    fill_props = np.arange(start=0, stop=(1+0.25), step=0.25)
+    fill_props = np.arange(start=0, stop=(1+0.1), step=0.1)
     bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
 
     # Store results
@@ -148,8 +149,8 @@ def test_contact_height_fill_proportion(bottle, arm):
 
 
 def test_arm_speed_fill_proportion(bottle, arm):
-    arm_rot_vels = np.arange(start=2*math.pi/32, stop=(math.pi), step=2*math.pi/32)  # 0, 2, 4, ... 20 m/s
-    fill_props = np.arange(start=0, stop=(1+0.25), step=0.25)
+    arm_rot_vels = np.arange(start=2*math.pi/32, stop=(math.pi/2), step=2*math.pi/32)
+    fill_props = np.arange(start=0, stop=(1+0.1), step=0.1)
     bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
 
     # have arm hit center of bottle
@@ -198,8 +199,8 @@ def test_arm_speed_fill_proportion(bottle, arm):
 
 
 def test_friction_fill_proportion(bottle, arm):
-    lat_frics = np.arange(start=0.1, stop=(0.2), step=0.01)
-    fill_props = np.arange(start=0, stop=(1+0.25), step=0.25)
+    lat_frics = np.arange(start=0.1, stop=(0.4+0.01), step=0.01)
+    fill_props = np.arange(start=0, stop=(1+0.1), step=0.1)
     bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
 
     # have arm hit center of bottle
