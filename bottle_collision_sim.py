@@ -9,7 +9,7 @@ import helpers
 from sim_objects import Bottle, Arm
 
 TEST_ID = 0  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
-VISUALIZE = False
+VISUALIZE = True
 GRAVITY = -9.81
 BASE_ID = 0
 SIM_RUNTIME = 2000  # iters for each test of a parameter
@@ -82,6 +82,13 @@ def run_sim(bottle, arm, duration=SIM_RUNTIME):
         prev_pos = bottle_pos
         if VISUALIZE: time.sleep(SIM_VIZ_FREQ)
 
+    
+def com_from_fill(bottle, fill_p):
+    water_height = bottle.height * fill_p
+    # com = [0, 0, water_height / 2.]
+    com = [0, 0, bottle.height * .9]
+    return com
+
 
 def get_arm_dimensions():
     global L1, L2, non_base_links
@@ -103,7 +110,7 @@ def get_arm_dimensions():
 
 
 def test_contact_height_fill_proportion(bottle, arm):
-    contact_heights = np.arange(0, bottle.height + bottle.height/20, bottle.height/20)
+    contact_heights = np.arange(0, bottle.height + bottle.height/5, bottle.height/5)
     joint_poses = helpers.get_target_joint_pos(arm, contact_heights, L1, L2, BASE_LINK_L)
     fill_props = np.arange(start=0, stop=(1+0.1), step=0.1)
     bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
@@ -113,10 +120,12 @@ def test_contact_height_fill_proportion(bottle, arm):
     fall_counts = [0] * len(horiz_bins)
 
     # for each fill proportion, test lateral friction and arm velocity separately
-    for bottle_mass in bottle_masses:
+    for fill_pi, bottle_mass in enumerate(bottle_masses):
+        center_of_mass = com_from_fill(bottle, fill_props[fill_pi])
         for joint_test_i, joint_pos in enumerate(joint_poses):
             bottle.bottle_id = p.createMultiBody(
                 baseMass=bottle_mass,
+                baseInertialFramePosition=center_of_mass,
                 baseCollisionShapeIndex=bottle.col_id,
                 basePosition=bottle.start_pos)
             p.changeDynamics(
@@ -161,10 +170,12 @@ def test_arm_speed_fill_proportion(bottle, arm):
     dist_counts = [0] * len(dist_bins)
 
     # for each fill proportion, test lateral friction and arm velocity separately
-    for bottle_mass in bottle_masses:
+    for fill_pi, bottle_mass in enumerate(bottle_masses):
+        center_of_mass = com_from_fill(bottle, fill_props[fill_pi])
         for rot_vel in arm_rot_vels:
             bottle.bottle_id = p.createMultiBody(
                 baseMass=bottle_mass,
+                baseInertialFramePosition=center_of_mass,
                 baseCollisionShapeIndex=bottle.col_id,
                 basePosition=bottle.start_pos)
             p.changeDynamics(
