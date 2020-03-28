@@ -8,8 +8,9 @@ import numpy as np
 import helpers
 from sim_objects import Bottle, Arm
 
-TEST_ID = 0  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
-VISUALIZE = False
+TEST_ID = 3  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
+# 3: bottle shape v.s dist
+VISUALIZE = True
 GRAVITY = -9.81
 BASE_ID = 0
 SIM_RUNTIME = 2000  # iters for each test of a parameter
@@ -39,6 +40,7 @@ log_id = -1
 plane_urdf_filepath = "plane.urdf"
 arm_filepath = "kuka_iiwa/model.urdf"
 table_filepath = "table/table.urdf"
+gripper_path = "kuka_iiwa/kuka_with_gripper.sdf"
 
 # p.setTimeOut(max_timeout_sec)
 
@@ -166,65 +168,10 @@ def test_contact_height_fill_proportion(bottle, arm):
 
 
 def test_arm_speed_fill_proportion(bottle, arm):
-    arm_rot_vels = np.arange(start=2*math.pi/32, stop=(math.pi/2), step=2*math.pi/32)
-    fill_props = np.arange(start=0, stop=(1+0.1), step=0.1)
-    bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
-
-    # have arm hit center of bottle
-    default_joint_pos = helpers.get_target_joint_pos(arm, [bottle.height/2], L1, L2, BASE_LINK_L)[0]
-
-    # Store results
-    dist_bins = np.arange(start=0, stop=MAX_DIST+4, step=4)  # cm
-    dist_counts = [0] * len(dist_bins)
-
-    # for each fill proportion, test lateral friction and arm velocity separately
-    sim_iter = 0
-    total_iters = float(len(bottle_masses) * len(arm_rot_vels))
-    for fill_pi, bottle_mass in enumerate(bottle_masses):
-        center_of_mass = com_from_fill(bottle, fill_props[fill_pi])
-        for rot_vel in arm_rot_vels:
-            sim_iter += 1
-            bottle.bottle_id = p.createMultiBody(
-                baseMass=bottle_mass,
-                baseInertialFramePosition=center_of_mass,
-                baseCollisionShapeIndex=bottle.col_id,
-                basePosition=bottle.start_pos)
-            p.changeDynamics(
-                bodyUniqueId=bottle.bottle_id, 
-                linkIndex=-1,  # no links, -1 refers to bottle base
-                lateralFriction=bottle.default_fric,
-                # rollingFriction=bottle.default_fric,
-                # spinningFriction=0.5
-            )
-
-            arm.arm_id = p.loadURDF(arm_filepath, arm.start_pos, arm.start_ori)
-            for joint_i in range(NUM_JOINTS):
-                p.resetJointState(arm.arm_id, joint_i, default_joint_pos[joint_i])
-
-            arm.rot_vel = rot_vel
-            run_sim(bottle, arm)
-
-            bottle_pos, bottle_ori = p.getBasePositionAndOrientation(bottle.bottle_id)
-            is_fallen = helpers.check_is_fallen(bottle_ori)
-            if not is_fallen:
-                dist = helpers.euc_dist_horiz(bottle_pos, bottle.start_pos) * M_TO_CM
-                nearest_bin =helpers.find_nearest_bin(dist, dist_bins)
-                dist_counts[nearest_bin] += 1
-
-            p.removeBody(bottle.bottle_id)
-            p.removeBody(arm.arm_id)
-            print("Percent Complete: %d" % int(sim_iter * 100. / total_iters))
-
-    if LOGGING and VISUALIZE:
-        p.stopStateLogging(log_id)
-
-    helpers.plot_distrib(horiz_bins=dist_bins, vert_bins=dist_counts,
-        xlabel='Distance moved (cm)', ylabel='Tally of Occurences',
-        title='Distance moved v.s arm rotational velocity and fill proportions')
-
-
-def test_bottle_shape_vs_fill_prop(bottle, arm):
-    arm_rot_vels = np.arange(start=2*math.pi/32, stop=(math.pi/2), step=2*math.pi/32)
+    target = 22.5  # deg/s
+    tolerance = 5  # deg/s
+    speed_bounds = np.array([target - tolerance, target + tolerance]) * math.pi / 180.
+    arm_rot_vels = np.arange(start=speed_bounds[0], stop=speed_bounds[1], step=math.pi/180.)
     fill_props = np.arange(start=0, stop=(1+0.1), step=0.1)
     bottle_masses = PLASTIC_MASS + (fill_props * MAX_VOLUME * VOL_TO_MASS)
 
@@ -276,9 +223,9 @@ def test_bottle_shape_vs_fill_prop(bottle, arm):
     if LOGGING and VISUALIZE:
         p.stopStateLogging(log_id)
 
-    helpers.plot_distrib(horiz_bins=dist_bins, vert_bins=dist_counts,
-        xlabel='Distance moved (cm)', ylabel='Tally of Occurences',
-        title='Distance moved v.s arm rotational velocity and fill proportions')
+    helpers.plot_distrib(horiz_bins=horiz_bins, vert_bins=fall_counts,
+        xlabel='Contact Height Percent of Total Height', ylabel='Fall Count',
+        title='Number of Times bottle fell v.s contact height and fill proportions')
 
 
 def test_friction_fill_proportion(bottle, arm):
@@ -336,6 +283,71 @@ def test_friction_fill_proportion(bottle, arm):
         title='Distance moved v.s friction and fill proportions')
 
 
+def test_bottle_shape(bottle, arm):
+    tolerance_r = BOTTLE_R * .2 # m
+    radius_bounds = np.array([BOTTLE_R - tolerance_r, BOTTLE_R + tolerance_r])
+    bottle_radiuses = np.arange(start=radius_bounds[0], stop=radius_bounds[1], step=0.001)
+
+    tolerance_h = BOTTLE_H * .2 # m
+    height_bounds = np.array([BOTTLE_H - tolerance_h, BOTTLE_H + tolerance_h])
+    bottle_heights = np.arange(start=height_bounds[0], stop=height_bounds[1], step=0.01)
+
+    # have arm hit center of bottle
+    default_joint_pos = helpers.get_target_joint_pos(arm, [bottle.height/2], L1, L2, BASE_LINK_L)[0]
+    center_of_mass = com_from_fill(bottle, 1)  # default to full bottle
+
+    # Store results
+    horiz_bins = (contact_heights / bottle.height) * 100  # percentage of height
+    fall_counts = [0] * len(horiz_bins)
+
+
+    # for each fill proportion, test lateral friction and arm velocity separately
+    sim_iter = 0
+    total_iters = float(len(bottle_heights) * len(bottle_radiuses))
+    for bottle_h in bottle_heights:
+        for bottle_r in bottle_radiuses:
+            sim_iter += 1
+
+            new_col_id = p.createCollisionShape(
+                shapeType=p.GEOM_CYLINDER,
+                radius=bottle_r, 
+                height=bottle_h)
+
+            bottle.bottle_id = p.createMultiBody(
+                baseMass=bottle.mass,
+                baseInertialFramePosition=center_of_mass,
+                baseCollisionShapeIndex=new_col_id,
+                basePosition=bottle.start_pos)
+            p.changeDynamics(
+                bodyUniqueId=bottle.bottle_id, 
+                linkIndex=-1,  # no links, -1 refers to bottle base
+                lateralFriction=bottle.default_fric,
+                # rollingFriction=bottle.default_fric,
+                # spinningFriction=0.5
+            )
+
+            arm.arm_id = p.loadURDF(arm_filepath, arm.start_pos, arm.start_ori)
+            for joint_i in range(NUM_JOINTS):
+                p.resetJointState(arm.arm_id, joint_i, default_joint_pos[joint_i])
+
+            run_sim(bottle, arm)
+
+            bottle_pos, bottle_ori = p.getBasePositionAndOrientation(bottle.bottle_id)
+            is_fallen = helpers.check_is_fallen(bottle_ori)
+            fall_counts[joint_test_i] += is_fallen
+
+            p.removeBody(bottle.bottle_id)
+            p.removeBody(arm.arm_id)
+            print("Percent Complete: %d" % int(sim_iter * 100. / total_iters))
+
+    if LOGGING and VISUALIZE:
+        p.stopStateLogging(log_id)
+
+    helpers.plot_distrib(horiz_bins=dist_bins, vert_bins=dist_counts,
+        xlabel='Distance moved (cm)', ylabel='Tally of Occurences',
+        title='Distance moved v.s arm rotational velocity and fill proportions')
+
+
 def test_diff_factors():
     global table_height, log_id
     if VISUALIZE: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -376,9 +388,11 @@ def test_diff_factors():
         # distance moved, arm rotation velocity, mass
         test_arm_speed_fill_proportion(bottle, arm)
 
-    else:  # TEST_ID == 2
+    elif TEST_ID == 2:  # TEST_ID == 2
         # distance moved, friction, bottle mass
         test_friction_fill_proportion(bottle, arm)
+    elif TEST_ID == 3:
+        test_bottle_shape(bottle, arm)
 
     p.disconnect()
 
