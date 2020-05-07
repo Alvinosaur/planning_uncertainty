@@ -26,6 +26,7 @@ class Environment(object):
         self.target_bottle_pos = np.array([0.8, 0.6, 0.1])
         self.FALL_COST = 100
         self.dist_cost_scale = 10
+        self.SIM_VIZ_FREQ = 1/240.
 
     # def create_sim(self):
     #     if self.is_viz: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -81,18 +82,19 @@ class Environment(object):
             action {Action} -- target position, force
         """
         # action composed of desired angle to move arm towards and height
-        (angle, const_height) = action
+        (angle, vel, const_height) = action
         dir_vec = np.array([math.cos(angle), math.sin(angle), 0])
-        velocity = 0.01
+        const_height_vec = np.array([0, 0, const_height])
+
+        # set initial target end-effector pos of arm
+        init_pos = 0.5 * dir_vec + np.array([0, 0, 0.2])
+        pos = np.copy(init_pos)
+        prevPose = np.copy(pos)
+        prevPose1 = self.arm.EE_start_pos
 
         # create new bottle object with parameters set beforehand
         self.bottle.create_sim_bottle()
-        self.arm.reset()
-
-        # set initial target end-effector pos of arm
-        pos = velocity * dir_vec + np.array([0, 0, const_height])
-        prevPose = np.copy(pos)
-        prevPose1 = np.array([0, 0, 0])
+        self.arm.reset(target_pos=init_pos, angle=angle)
 
         # iterate through action
         pos_change = 0  # init arbitrary
@@ -101,16 +103,17 @@ class Environment(object):
         while iter < self.N and (
                 iter < self.MIN_ITERS or pos_change > self.stop_sim_thresh):
             iter += 1
+            t += 0.1
             # update target
-            pos += velocity * dir_vec
+            pos = dir_vec * vel *t + init_pos
             
             # confine target position within reach of arm
-            target_dist = np.linalg.norm(pos - self.arm.EE_start_pos)
+            target_dist = np.linalg.norm(pos - self.arm.base_pos)
             if target_dist >  self.arm.MAX_REACH:
-                pos = self.arm.MAX_REACH*dir_vec + np.array([0,0,const_height])
+                pos = self.arm.MAX_REACH*dir_vec + const_height_vec
 
             # set target joint positions of arm
-            joint_poses = self.arm.get_target_joints(pos)
+            joint_poses = self.arm.get_target_joints(pos, angle)
             for i in range(self.arm.num_joints):
                 p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
                                         jointIndex=i,
@@ -125,12 +128,14 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
-            p.addUserDebugLine(prevPose, pos, [0, 0, 0.3], 1, self.trail_dur)
-            p.addUserDebugLine(prevPose1, ls[4], [1, 0, 0], 1, self.trail_dur)
+            # p.addUserDebugLine(prevPose, pos, [0, 0, 0.3], 1, self.trail_dur)
+            # p.addUserDebugLine(prevPose1, ls[4], [1, 0, 0], 1, self.trail_dur)
             pos_change = np.linalg.norm(prevPose1 - np.array(ls[4]))
 
             prevPose = np.copy(pos)
             prevPose1 = np.array(ls[4])
+
+            if self.is_viz: time.sleep(self.SIM_VIZ_FREQ)
 
         # stop simulation if bottle and arm stopped moving
         is_fallen = self.bottle.check_is_fallen()
@@ -173,7 +178,7 @@ def main():
         radius=bottle.radius, 
         height=bottle.height)
     
-    env = Environment(arm, bottle)
+    env = Environment(arm, bottle, is_viz=VISUALIZE)
 
     # Action space
     dh = 5
@@ -182,13 +187,15 @@ def main():
         stop=bottle.height + bottle.height/dh, 
         step=bottle.height/dh)
     angles = np.arange(start=math.pi/4, stop=math.pi+math.pi/4, step=math.pi/4)
+    velocities = np.arange(start=0.1, stop=1, step=0.1)
 
     # run through all possible actions at a given state
     for angle in angles:
         for h in contact_heights:
-            action = (angle, h)
-            expected_cost = env.run_sim(action)
-            # expected_cost = env.run_sim_stochastic(action)
+            for vel in velocities:
+                action = (angle, vel, h)
+                expected_cost = env.run_sim(action)
+                # expected_cost = env.run_sim_stochastic(action)
 
     if LOGGING and VISUALIZE:
         p.stopStateLogging(log_id)

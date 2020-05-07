@@ -100,16 +100,19 @@ class Arm:
         self.num_joints = 7
         self.ikSolver = 0  # id of solver algorithm provided by pybullet
 
-        self.init_joints = self.get_target_joints(EE_start_pos)
+        self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
 
-    def reset(self):
+    def reset(self, target_pos=None, angle=0):
         p.resetBasePositionAndOrientation(
             self.kukaId, self.base_pos, self.start_ori)
+
+        if target_pos is None: joints = self.init_joints
+        else: joints = self.get_target_joints(target_pos, angle=angle)
         for i in range(self.num_joints):
-            p.resetJointState(self.kukaId, i, self.init_joints[i])
+            p.resetJointState(self.kukaId, i, joints[i])
 
 
-    def get_target_joints(self, target_EE_pos):
+    def get_target_joints(self, target_EE_pos, angle):
         # joint_poses = p.calculateInverseKinematics(
         #     self.kukaId,
         #     self.EE_idx,
@@ -117,12 +120,16 @@ class Arm:
         #     lowerLimits=self.ll,
         #     upperLimits=self.ul,
         #     jointRanges=self.jr,
-        #     restPoses=self.rp)
+        #     restPoses=self.rp)s
+        orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
         joint_poses = p.calculateInverseKinematics(
             self.kukaId,
             self.EE_idx,
             target_EE_pos,
-            solver=self.ikSolver)
+            orn,
+            solver=self.ikSolver,
+            maxNumIterations=100,
+            residualThreshold=.01)
         return joint_poses
 
 
