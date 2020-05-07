@@ -25,6 +25,11 @@ class Bottle:
         self.center_of_mass = None
         self.set_fill_proportion(fill_prop)
 
+        self.col_id = p.createCollisionShape(
+            shapeType=p.GEOM_CYLINDER,
+            radius=self.radius, 
+            height=self.height)
+
     def set_fill_proportion(self, fill_prop):
         self.bottle_mass = self.mass_from_fill(fill_prop)
         self.center_of_mass = self.com_from_fill(fill_prop)
