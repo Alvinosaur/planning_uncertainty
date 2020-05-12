@@ -3,6 +3,8 @@ import numpy as np
 import pybullet as p
 from scipy.spatial.transform import Rotation as R
 
+TWO_PI = 2*math.pi
+
 # water bottle 
 class Bottle:
     WATER_DENSITY = 997    # kg/m³
@@ -43,9 +45,9 @@ class Bottle:
         water_height = self.height * fill_prop
         if water_height == 0: 
             # if bottle empty, com is just center of cylinder
-            return [0, 0, self.height / 2.]
+            return [0, 0, self.height * 0.45]  # less than half of height
         else:
-            return [0, 0, water_height / 2.]
+            return [0, 0, water_height * 0.45]
 
     def create_sim_bottle(self):
         self.bottle_id = p.createMultiBody(
@@ -74,7 +76,8 @@ class Arm:
         self.EE_start_pos = EE_start_pos
         self.start_ori = start_ori
         self.kukaId = kukaId
-        self.base_pos = [0, 0, 0.1]
+        self.base_pos = np.array([0, 0, 0.1])
+        self.min_dist = 0.4
 
         # NOTE: taken from example: 
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
@@ -95,7 +98,7 @@ class Arm:
         self.rot_vel = self.max_vel
     
         # may possibly change the below params to be part of action space
-        self.MAX_REACH = 1.2  # approx max reach radius of arm
+        self.MAX_REACH = 0.8  # approx max reach radius of arm
         self.target_velocity = 0
         self.force = 500
         self.position_gain = 0.03
@@ -110,11 +113,25 @@ class Arm:
     def reset(self, target_pos=None, angle=0):
         p.resetBasePositionAndOrientation(
             self.kukaId, self.base_pos, self.start_ori)
+        
+        # reset all joints in case current pose cannot be solved for with iK
+        # if this isn't done, ik will attempt to solve for target pos with current pos rather than default pos, which might not be possible
+        # for i in range(self.num_joints):
+        #     p.resetJointState(self.kukaId, i, 0)
 
         if target_pos is None: joints = self.init_joints
-        else: joints = self.get_target_joints(target_pos, angle=angle)
+        else: 
+            joints = self.get_target_joints(target_pos, angle=angle)
+            # print(joints)
+
         for i in range(self.num_joints):
             p.resetJointState(self.kukaId, i, joints[i])
+        
+        ls = p.getLinkState(self.kukaId, self.EE_idx)
+        # joint_info = p.getJointStates(self.kukaId)
+        # print(target_pos)
+        
+        # print("resetted arm!")
 
 
     def get_target_joints(self, target_EE_pos, angle):
@@ -127,14 +144,25 @@ class Arm:
         #     jointRanges=self.jr,
         #     restPoses=self.rp)s
         orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
+        # joint_poses = list(p.calculateInverseKinematics(
+        #     self.kukaId,
+        #     self.EE_idx,
+        #     target_EE_pos,
+        #     orn,
+        #     lowerLimits=self.ll,
+        #     upperLimits=self.ul,
+        #     jointRanges=self.jr,
+        #     restPoses=self.rp))
         joint_poses = p.calculateInverseKinematics(
             self.kukaId,
             self.EE_idx,
             target_EE_pos,
-            orn,
-            solver=self.ikSolver,
-            maxNumIterations=100,
-            residualThreshold=.01)
+            # orn,
+            jointDamping=self.jd,
+            solver=self.ikSolver)
+            # maxNumIterations=100,
+            # residualThreshold=.01)
+
         return joint_poses
 
 
