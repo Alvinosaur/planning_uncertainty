@@ -56,11 +56,13 @@ def init_action_space(bottle):
         step=bottle.height/dh)
     
     # velocities = np.arange(start=0.005, stop=0.01, step=0.001)
-    velocities = np.arange(start=0.1, stop=0.51, step=0.1)
+    # velocities = np.arange(start=0.1, stop=0.51, step=0.1)
+    velocities = [0.2]
+    contact_heights = [contact_heights[0]]
 
     da = math.pi/80
     # angle_offsets = np.arange(start=-3*da, stop=4*da, step=da)
-    angle_offsets = np.arange(start=-da, stop=2*da, step=da)
+    angle_offsets = np.arange(start=-3*da, stop=4*da, step=da)
     for h in contact_heights:
         for v in velocities:
             for a in angle_offsets:
@@ -123,13 +125,15 @@ class MDP():
         for (x,y) in self.valid_states:
             self.env.change_bottle_pos(
                 new_pos=[x, y, 0.1],
-                target_type="extend")
+                target_type="const")
             (xi, yi) = self.state_to_idx((x,y))
             best_actions = self.P[yi][xi]
             expected_cost = 0
             prob = 1./float(len(best_actions))  # uniform distb for best actions
             for action in best_actions:
+                print('start')
                 cost, ns = self.env.run_sim_stochastic(action)
+                print(cost, action.angle_offset)
                 try:
                     (nxi, nyi) = self.state_to_idx(ns)
                     expected_future_cost = self.V[nyi, nxi]
@@ -153,12 +157,13 @@ class MDP():
         for (x,y) in self.valid_states:
             self.env.change_bottle_pos(
                 new_pos=[x, y, 0.1],
-                target_type="extend")
+                target_type="const")
             (xi, yi) = self.state_to_idx((x,y))
             min_cost = 0
             best_actions = []
             for ai, action in enumerate(self.A):
                 cost, ns = self.env.run_sim_stochastic(action)
+                print(cost, action.angle_offset)
                 try:
                     (nxi, nyi) = self.state_to_idx(ns)
                     expected_future_cost = self.V[nyi, nxi]

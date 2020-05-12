@@ -24,7 +24,9 @@ class Bottle:
 
         # sets mass and center of mass
         self.bottle_mass = None
+        self.inertial_shift = None
         self.center_of_mass = None
+        self.default_com = np.array([0, 0, self.height/2])
         self.set_fill_proportion(fill_prop)
 
         self.col_id = p.createCollisionShape(
@@ -35,6 +37,7 @@ class Bottle:
     def set_fill_proportion(self, fill_prop):
         self.bottle_mass = self.mass_from_fill(fill_prop)
         self.center_of_mass = self.com_from_fill(fill_prop)
+        self.inertial_shift = self.center_of_mass - self.default_com
 
     def mass_from_fill(self, fill_prop):
         return Bottle.PLASTIC_MASS + (
@@ -45,14 +48,15 @@ class Bottle:
         water_height = self.height * fill_prop
         if water_height == 0: 
             # if bottle empty, com is just center of cylinder
-            return [0, 0, self.height * 0.45]  # less than half of height
+            # less than half of height
+            return np.array([0, 0, self.height/2])  
         else:
-            return [0, 0, water_height * 0.45]
+            return np.array([0, 0, water_height/2])
 
     def create_sim_bottle(self):
         self.bottle_id = p.createMultiBody(
             baseMass=self.bottle_mass,
-            baseInertialFramePosition=self.center_of_mass,
+            baseInertialFramePosition=self.inertial_shift,
             baseCollisionShapeIndex=self.col_id,
             basePosition=self.start_pos)
         p.changeDynamics(

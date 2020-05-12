@@ -39,10 +39,10 @@ class Environment(object):
         # varying unobservable parameters of bottle
         self.min_fric = 0.1
         self.max_fric = 0.2
-        self.fric_step = 0.05
+        self.fric_step = 5 #0.05
         self.min_fill = 0.1
         self.max_fill = 1.0
-        self.fill_step = 0.3
+        self.fill_step = 5#0.3
 
     # def create_sim(self):
     #     if self.is_viz: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -69,6 +69,8 @@ class Environment(object):
         self.bottle.start_pos = new_pos
         if target_type == "extend":
             self.target_bottle_pos = np.array(new_pos) * 1.5 
+        elif target_type == "const":
+            self.target_bottle_pos = np.array([-0.9, 0, 0.1])
         else:
             print("Invalid type of bottle change: %s" % target_type)
             assert(False)
