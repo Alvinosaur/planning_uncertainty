@@ -8,7 +8,7 @@ import numpy as np
 import helpers
 from sim_objects import Bottle, Arm
 
-TEST_ID = 3  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
+TEST_ID = 0  # {0: contact height v.s topple frequency, 1: arm speed v.s dist, 2: friction v.s dist}
 # 3: bottle shape v.s dist
 VISUALIZE = True
 GRAVITY = -9.81
@@ -74,6 +74,7 @@ def run_sim(bottle, arm, duration=SIM_RUNTIME):
 
         # stop simulation if bottle and arm stopped moving
         bottle_pos, bottle_ori = p.getBasePositionAndOrientation(bottle.bottle_id)
+        print(bottle_pos)
         if not move_arm and prev_pos is not None:
             is_fallen = helpers.check_is_fallen(bottle_ori)
             bottle_vert_stopped = math.isclose(bottle_pos[2] - prev_pos[2], 0.0, abs_tol=1e-05)
@@ -152,6 +153,7 @@ def test_contact_height_fill_proportion(bottle, arm):
             run_sim(bottle, arm)
 
             bottle_pos, bottle_ori = p.getBasePositionAndOrientation(bottle.bottle_id)
+            print(bottle_pos)
             is_fallen = helpers.check_is_fallen(bottle_ori)
             fall_counts[joint_test_i] += is_fallen
 

@@ -21,6 +21,7 @@ class Bottle:
         self.mass = 0.5        # kg
         self.default_fric = 0.1  # plastic-wood dynamic friction
         self.lat_fric = self.default_fric
+        self.min_fill = 0.2
 
         # sets mass and center of mass
         self.bottle_mass = None
@@ -46,12 +47,12 @@ class Bottle:
     def com_from_fill(self, fill_prop):
         # calculate center of mass of water bottle
         water_height = self.height * fill_prop
-        if water_height == 0: 
+        if fill_prop <= self.min_fill: 
             # if bottle empty, com is just center of cylinder
             # less than half of height
-            return np.array([0, 0, self.height/2])  
+            return np.array([0, 0, self.height * 0.4])  
         else:
-            return np.array([0, 0, water_height/2])
+            return np.array([0, 0, water_height * 0.4])
 
     def create_sim_bottle(self):
         self.bottle_id = p.createMultiBody(
@@ -161,7 +162,7 @@ class Arm:
             self.kukaId,
             self.EE_idx,
             target_EE_pos,
-            # orn,
+            orn,
             jointDamping=self.jd,
             solver=self.ikSolver)
             # maxNumIterations=100,
