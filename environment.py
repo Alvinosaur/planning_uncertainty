@@ -4,6 +4,7 @@ import time
 import math
 from datetime import datetime
 import numpy as np
+import time
 
 from sim_objects import Arm, Bottle
 
@@ -14,13 +15,21 @@ class Action():
         self.velocity = velocity
         self.height = height
 
+    def __repr__(self):
+        return "a: %d, v: %.3f, h: %.3f" % (
+            int(self.angle_offset * 180 / math.pi),
+            self.velocity,
+            self.height
+        )
+
 class Environment(object):
     # pybullet_data built-in models
     plane_urdf_filepath = "plane.urdf"
     arm_filepath = "kuka_iiwa/model.urdf"
     table_filepath = "table/table.urdf"
     gripper_path = "kuka_iiwa/kuka_with_gripper.sdf"
-    def __init__(self, arm, bottle,  is_viz=True, gravity=-9.81, N=500):
+    def __init__(self, arm, bottle,  is_viz=True, gravity=-9.81, N=500, 
+            run_full_mdp=True):
         self.arm = arm
         self.bottle = bottle
         # angle to hit bottle
@@ -35,14 +44,25 @@ class Environment(object):
         self.FALL_COST = 100
         self.dist_cost_scale = 10
         self.SIM_VIZ_FREQ = 1/240.
+        self.run_full_mdp = run_full_mdp
+        self.target_thresh = 0.08
 
+        
         # varying unobservable parameters of bottle
-        self.min_fric = 0.1
-        self.max_fric = 0.2
-        self.fric_step = 5 #0.05
-        self.min_fill = 0.1
-        self.max_fill = 1.0
-        self.fill_step = 5#0.3
+        if run_full_mdp:
+            self.min_fric = 0.1
+            self.max_fric = 0.2
+            self.fric_step = 0.05
+            self.min_fill = 0.1
+            self.max_fill = 1.0
+            self.fill_step = 0.3
+        else:
+            self.min_fric = 0.1
+            self.max_fric = 0.2
+            self.fric_step = 0.05 
+            self.min_fill = 0.1
+            self.max_fill = 1.0
+            self.fill_step = 0.3
 
     # def create_sim(self):
     #     if self.is_viz: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -62,15 +82,20 @@ class Environment(object):
 
     def eval_cost(self, is_fallen, bottle_pos):
         dist = np.linalg.norm(self.target_bottle_pos[:2] - bottle_pos[:2])
-        return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
+        # Pure euclidean distance from goal
+        # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
+        # reach target within some radius
+        return (self.dist_cost_scale*(dist >= self.target_thresh) + 
+                self.FALL_COST*is_fallen)
 
 
     def change_bottle_pos(self, new_pos, target_type="extend"):
         self.bottle.start_pos = new_pos
         if target_type == "extend":
-            self.target_bottle_pos = np.array(new_pos) * 1.5 
+            self.target_bottle_pos = np.array(new_pos) * 2
+            self.target_bottle_pos[2] = new_pos[2]  # keep z position same
         elif target_type == "const":
-            self.target_bottle_pos = np.array([-0.9, 0, 0.1])
+            self.target_bottle_pos = np.array([0.65, 0.55, 0.1])
         else:
             print("Invalid type of bottle change: %s" % target_type)
             assert(False)
@@ -93,21 +118,35 @@ class Environment(object):
             stop=(self.max_fill+self.fill_step), 
             step=self.fill_step)
         total_iters = float(len(fill_props) * len(lat_frics))
-        sim_iter = 0
+        # sim_iter = 0
         # iterate through possible env factors to account for unknwon parameters
         # and get expected cost
         avg_bottle_final_pos = np.zeros((2,))
+        # avg = 0.0
+        pos_count = 0
         for fill_prop in fill_props:
             self.bottle.set_fill_proportion(fill_prop)
             for lat_fric in lat_frics:
-                sim_iter += 1
+                # sim_iter += 1
                 self.bottle.lat_fric = lat_fric
+                start = time.time()
                 cost, bottle_pos = self.run_sim(action)
-                avg_bottle_final_pos += bottle_pos
-                total_cost += cost
+                end = time.time()
                 
+                # avg += (end-start)
+                # only include avg bottle pos if didn't fall
+                # since simulator sometimes produces strange behavior when bottle falls
+                if cost < self.FALL_COST:
+                    avg_bottle_final_pos += bottle_pos
+                    pos_count += 1
+                total_cost += cost
+        
+        # print("Time(s) to run one sim: %.3f"  % (avg / total_iters))
         expected_cost = total_cost / total_iters
-        avg_bottle_final_pos = avg_bottle_final_pos / total_iters
+        if pos_count > 0:
+            avg_bottle_final_pos = avg_bottle_final_pos / pos_count
+        else:
+            avg_bottle_final_pos = self.bottle.start_pos[:2]
         return expected_cost, avg_bottle_final_pos
 
 
@@ -131,7 +170,12 @@ class Environment(object):
         target_pos = self.arm.MAX_REACH*dir_vec + const_height_vec
         num_iters = int(min(T/action.velocity, self.MAX_ITERS))
         # num_iters = int(T/action.velocity)
-        trajectory = np.linspace(init_pos, target_pos, num=num_iters)
+        xy_traj = np.linspace(init_pos[:2], target_pos[:2], num=num_iters)
+
+        # find iter where arm makes contact with arm, which should be minimizing horiz dist with bottle position
+        iters_till_contact = np.argmin(
+            np.linalg.norm(xy_traj-self.bottle.start_pos[:2], axis=1) )
+        z_traj = np.linspace(init_pos[2], target_pos[2], num=iters_till_contact)
 
         pos = np.copy(init_pos)
         prevPose = np.copy(pos)
@@ -158,7 +202,9 @@ class Environment(object):
         # for iter in range(num_iters):
             iter += 1
             pos_i = min(iter, num_iters-1)
-            pos = trajectory[pos_i,:]
+            pos = xy_traj[pos_i,:]
+            z = z_traj[min(iter, iters_till_contact-1)]
+            pos = np.append(pos, z)
 
             # set target joint positions of arm
             joint_poses = self.arm.get_target_joints(pos, angle)
@@ -176,6 +222,7 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
+            # Uncomment below to visualize lines of target and actual trajectory
             # p.addUserDebugLine(prevPose, pos, [0, 0, 0.3], 1, self.trail_dur)
             # p.addUserDebugLine(prevPose1, ls[4], [1, 0, 0], 1, self.trail_dur)
             pos_change = np.linalg.norm(prevPose1 - np.array(ls[4]))
@@ -187,11 +234,12 @@ class Environment(object):
             bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
                 self.bottle.bottle_id)
             bottle_vert_stopped = math.isclose(
-                bottle_pos[2] - prev_bottle_pos[2], 0.0, 
-                abs_tol=1e-05)
+                bottle_pos[2] - prev_bottle_pos[2], 
+                0.0, abs_tol=1e-05)
             bottle_horiz_stopped = math.isclose(
                 np.linalg.norm(
-                    np.array(bottle_pos)[:2] - np.array(prev_bottle_pos)[:2]), 0.0, abs_tol=1e-05)
+                    np.array(bottle_pos)[:2] - np.array(prev_bottle_pos)[:2]), 
+                0.0, abs_tol=1e-05)
             prev_bottle_pos = bottle_pos
 
             # if self.is_viz: time.sleep(self.SIM_VIZ_FREQ)
@@ -204,4 +252,3 @@ class Environment(object):
         return self.eval_cost(is_fallen, bottle_pos), np.array(bottle_pos[:2])
         
         # # print(bottle_vert_stopped)
-        # 
