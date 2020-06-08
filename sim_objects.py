@@ -3,6 +3,7 @@ import numpy as np
 import pybullet as p
 from scipy.spatial.transform import Rotation as R
 
+PI = math.pi
 TWO_PI = 2*math.pi
 
 # water bottle 
@@ -82,14 +83,17 @@ class Arm:
         self.start_ori = start_ori
         self.kukaId = kukaId
         self.base_pos = np.array([0, 0, 0.1])
-        self.min_dist = 0.4
+        self.min_dist = 0.3
+        self.MAX_REACH = None  # need to set with set_general_max_reach()
 
         # NOTE: taken from example: 
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
         #lower limits for null space
-        self.ll = [-.967, -2, -2.96, 0.19, -2.96, -2.09, -3.05]
+        # self.ll = [-.967, -2, -2.96, 0.19, -2.96, -2.09, -3.05]
+        self.ll = [-PI, -PI, -PI, -PI, -PI, -PI, -PI]
         #upper limits for null space
-        self.ul = [.967, 2, 2.96, 2.29, 2.96, 2.09, 3.05]
+        # self.ul = [.967, 2, 2.96, 2.29, 2.96, 2.09, 3.05]
+        self.ul = [PI, PI, PI, PI, PI, PI, PI]
         #joint ranges for null space
         self.jr = [5.8, 4, 5.8, 4, 5.8, 4, 6]
         #restposes for null space
@@ -103,11 +107,15 @@ class Arm:
         self.rot_vel = self.max_vel
     
         # may possibly change the below params to be part of action space
-        self.MAX_REACH = 0.8  # approx max reach radius of arm
+        self.max_straight_pos = np.array([0.78751945, 0.57154083, 0.49517447])
+        # length of base link
+        self.L1 = self.max_straight_pos[2] - self.base_pos[2]  
+        self.LE = 0.081  # dist btwn EE frame and frame before EE
+        self.rprime = np.linalg.norm(self.max_straight_pos[:2]) - self.LE
         self.target_velocity = 0
         self.force = 500
-        self.position_gain = 0.03
-        self.velocity_gain = 1
+        self.position_gain = 0.1
+        self.velocity_gain = 0.5
 
         self.EE_idx = 6
         self.num_joints = 7
@@ -133,10 +141,25 @@ class Arm:
             p.resetJointState(self.kukaId, i, joints[i])
         
         ls = p.getLinkState(self.kukaId, self.EE_idx)
-        # joint_info = p.getJointStates(self.kukaId)
-        # print(target_pos)
-        
-        # print("resetted arm!")
+
+
+    def calc_max_horiz_dist(self, contact_height):
+        hprime = abs(self.L1 - contact_height)
+        dprime = (self.rprime**2 - hprime**2)**0.5
+        max_horiz_dist = dprime + self.LE
+        return max_horiz_dist
+
+
+    def set_general_max_reach(self, all_contact_heights):
+        closest_h = None
+        min_dist = 0  # dist from L1 joint, which has fixed height
+        for h in all_contact_heights:
+            dist = abs(h - self.L1)
+            if dist < min_dist or closest_h is None:
+                min_dist = dist
+                closest_h = h
+
+        self.MAX_REACH = self.calc_max_horiz_dist(closest_h)
 
 
     def get_target_joints(self, target_EE_pos, angle):
@@ -149,22 +172,22 @@ class Arm:
         #     jointRanges=self.jr,
         #     restPoses=self.rp)s
         orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
-        # joint_poses = list(p.calculateInverseKinematics(
-        #     self.kukaId,
-        #     self.EE_idx,
-        #     target_EE_pos,
-        #     orn,
-        #     lowerLimits=self.ll,
-        #     upperLimits=self.ul,
-        #     jointRanges=self.jr,
-        #     restPoses=self.rp))
-        joint_poses = p.calculateInverseKinematics(
+        joint_poses = list(p.calculateInverseKinematics(
             self.kukaId,
             self.EE_idx,
             target_EE_pos,
             orn,
-            jointDamping=self.jd,
-            solver=self.ikSolver)
+            lowerLimits=self.ll,
+            upperLimits=self.ul,
+            jointRanges=self.jr,
+            restPoses=self.rp))
+        # joint_poses = p.calculateInverseKinematics(
+        #     self.kukaId,
+        #     self.EE_idx,
+        #     target_EE_pos,
+        #     orn,
+        #     jointDamping=self.jd,
+            # solver=self.ikSolver)
             # maxNumIterations=100,
             # residualThreshold=.01)
 

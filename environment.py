@@ -10,16 +10,18 @@ from sim_objects import Arm, Bottle
 
 
 class Action():
-    def __init__(self, angle_offset, velocity, height):
+    def __init__(self, angle_offset, velocity, height, reach_p):
         self.angle_offset = angle_offset
         self.velocity = velocity
         self.height = height
+        self.reach_p = reach_p
 
     def __repr__(self):
-        return "a: %d, v: %.3f, h: %.3f" % (
+        return "a: %d, v: %.3f, h: %.3f, rp: %.1f" % (
             int(self.angle_offset * 180 / math.pi),
             self.velocity,
-            self.height
+            self.height,
+            self.reach_p
         )
 
 class Environment(object):
@@ -28,8 +30,9 @@ class Environment(object):
     arm_filepath = "kuka_iiwa/model.urdf"
     table_filepath = "table/table.urdf"
     gripper_path = "kuka_iiwa/kuka_with_gripper.sdf"
+    INF = 1e10
     def __init__(self, arm, bottle,  is_viz=True, gravity=-9.81, N=500, 
-            run_full_mdp=True):
+            run_full_mdp=True, cost_based=True):
         self.arm = arm
         self.bottle = bottle
         # angle to hit bottle
@@ -38,55 +41,41 @@ class Environment(object):
         self.gravity = gravity
         self.stop_sim_thresh = 0.001  # if arm can't move any further, stop sim
         self.MIN_ITERS = 50  # sim doesn't prematurely stop if arm too slow
-        self.MAX_ITERS = 700  # number of sim steps per action
+        self.MAX_ITERS = 150  # number of sim steps per action
+        # number of random samples of internal params for stochastic simulation
+        self.sim_samples = 10  
         self.trail_dur = 1  # visulize arm trajectory
-        self.target_bottle_pos = np.array([0.8, 0.6, 0.1])
-        self.FALL_COST = 100
+        self.target_bottle_pos = np.zeros((3,))
+        self.FALL_COST = Environment.INF
         self.dist_cost_scale = 10
         self.SIM_VIZ_FREQ = 1/240.
         self.run_full_mdp = run_full_mdp
         self.target_thresh = 0.08
+        self.init_reach_p = 0.7
+        self.target_line = None
+        self.cost_based = cost_based
 
-        
-        # varying unobservable parameters of bottle
-        if run_full_mdp:
-            self.min_fric = 0.1
-            self.max_fric = 0.2
-            self.fric_step = 0.05
-            self.min_fill = 0.1
-            self.max_fill = 1.0
-            self.fill_step = 0.3
-        else:
-            self.min_fric = 0.1
-            self.max_fric = 0.2
-            self.fric_step = 0.05 
-            self.min_fill = 0.1
-            self.max_fill = 1.0
-            self.fill_step = 0.3
+        # Normal distribution of internal bottle params
+        self.min_fric = 0.1
+        self.max_fric = 0.2
+        self.min_fill = 0.1
+        self.max_fill = 1.0
+        self.mean_friction = (self.min_fric + self.max_fric) / 2.
+        # want min and max to be at 3 std deviations
+        self.std_friction = (self.max_fric - self.mean_friction) / 3.
+        self.mean_fillp = (self.min_fill + self.max_fill) / 2.
+        self.std_fillp = (self.max_fill - self.mean_fillp) / 3.
 
-    # def create_sim(self):
-    #     if self.is_viz: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
-    #     else: p.connect(p.DIRECT)
-    #     p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    #     p.setGravity(0,0,self.gravity)
-    #     planeId = p.loadURDF(Environment.plane_urdf_filepath)
-
-    # def restart_sim(self, is_viz=None):
-    #     # restart simulator with option of changing visualization mode
-    #     try:
-    #         p.disconnect()
-    #     except p.error:
-    #         print("No sim to disconnect from, creating new one as normal...")
-    #     if is_viz is not None: self.is_viz = is_viz
-    #     self.create_sim()
 
     def eval_cost(self, is_fallen, bottle_pos):
         dist = np.linalg.norm(self.target_bottle_pos[:2] - bottle_pos[:2])
         # Pure euclidean distance from goal
-        # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
-        # reach target within some radius
-        return (self.dist_cost_scale*(dist >= self.target_thresh) + 
-                self.FALL_COST*is_fallen)
+        if self.cost_based:
+            return dist + self.FALL_COST*is_fallen
+        else:  # reward-based
+            # reach target within some radius
+            return (10*(dist < self.target_thresh) - 
+                    self.FALL_COST*is_fallen)
 
 
     def change_bottle_pos(self, new_pos, target_type="extend"):
@@ -95,59 +84,47 @@ class Environment(object):
             self.target_bottle_pos = np.array(new_pos) * 2
             self.target_bottle_pos[2] = new_pos[2]  # keep z position same
         elif target_type == "const":
-            self.target_bottle_pos = np.array([0.65, 0.55, 0.1])
+            const_target = np.array([0.65, 0.55, 0.1])
+            
+            if not np.allclose(self.target_bottle_pos, const_target, atol=1e-5):
+                vert_offset_target = const_target + np.array([0,0,1])
+                p.addUserDebugLine(const_target, 
+                    vert_offset_target, [1, 0, 0], 4, 0)
+                
+            self.target_bottle_pos = const_target
         else:
             print("Invalid type of bottle change: %s" % target_type)
             assert(False)
+
         self.main_angle = math.atan2(new_pos[1], new_pos[0])
 
 
     def run_sim_stochastic(self, action: Action):
-        """Different from normal run_sim by iterating over unknown parameters of bottle friction, slight deviations in bottle location, bottle mass
-
-        Arguments:
-            action {[type]} -- [description]
         """
-        total_cost = 0
-        lat_frics = np.arange(
-            start=self.min_fric, 
-            stop=(self.max_fric+self.fric_step), 
-            step=self.fric_step)
-        fill_props = np.arange(
-            start=self.min_fill, 
-            stop=(self.max_fill+self.fill_step), 
-            step=self.fill_step)
-        total_iters = float(len(fill_props) * len(lat_frics))
-        # sim_iter = 0
-        # iterate through possible env factors to account for unknwon parameters
-        # and get expected cost
-        avg_bottle_final_pos = np.zeros((2,))
-        # avg = 0.0
-        pos_count = 0
-        for fill_prop in fill_props:
-            self.bottle.set_fill_proportion(fill_prop)
-            for lat_fric in lat_frics:
-                # sim_iter += 1
-                self.bottle.lat_fric = lat_fric
-                start = time.time()
-                cost, bottle_pos = self.run_sim(action)
-                end = time.time()
-                
-                # avg += (end-start)
-                # only include avg bottle pos if didn't fall
-                # since simulator sometimes produces strange behavior when bottle falls
-                if cost < self.FALL_COST:
-                    avg_bottle_final_pos += bottle_pos
-                    pos_count += 1
-                total_cost += cost
-        
-        # print("Time(s) to run one sim: %.3f"  % (avg / total_iters))
-        expected_cost = total_cost / total_iters
-        if pos_count > 0:
-            avg_bottle_final_pos = avg_bottle_final_pos / pos_count
-        else:
-            avg_bottle_final_pos = self.bottle.start_pos[:2]
-        return expected_cost, avg_bottle_final_pos
+        Randomly sample internal(unobservable to agent) bottle parameters.
+        """
+        expected_cost = 0
+        expected_next_state = np.zeros((2,))
+        for sim_iter in range(self.sim_samples):
+            rand_fill = np.random.normal(
+                loc=self.mean_fillp, scale=self.std_fillp)
+            rand_fric = np.random.normal(
+                loc=self.mean_friction, scale=self.std_friction)
+
+            # ensure actually feasible parameters by enforcing bounds
+            if rand_fill < self.min_fill: rand_fill = self.min_fill
+            elif rand_fill > self.max_fill: rand_fill = self.max_fill
+            if rand_fric < self.min_fric: rand_fric = self.min_fric
+            elif rand_fric > self.max_fric: rand_fric = self.max_fric
+
+            self.bottle.set_fill_proportion(rand_fill)
+            self.bottle.lat_fric = rand_fric
+            cost, ns = self.run_sim(action)
+            expected_cost += cost
+            expected_next_state += ns
+
+        return (expected_cost / float(self.sim_samples), 
+            expected_next_state / float(self.sim_samples))
 
 
     def run_sim(self, action: Action):
@@ -160,54 +137,83 @@ class Environment(object):
         # action composed of desired angle to move arm towards and height
         da = action.angle_offset
         angle = self.main_angle + da
-        dir_vec = np.array([math.cos(angle), math.sin(angle), 0])
+        dir_vec = np.array([math.cos(angle), math.sin(angle)])
         const_height_vec = np.array([0, 0, action.height])
 
         # generate arm EE trajectory
-        dt = 0.1
-        T = 100.
-        init_pos = 0.5 * np.array(self.bottle.start_pos) + np.array([0, 0, 0.2])
-        target_pos = self.arm.MAX_REACH*dir_vec + const_height_vec
-        num_iters = int(min(T/action.velocity, self.MAX_ITERS))
+        T = 10.
+
+        bottle_dist = np.linalg.norm(
+            self.bottle.start_pos[:2] - self.arm.base_pos[:2])
+        # max x,y defined by arm's max reach, z is contact height
+        max_horiz_dist = self.arm.calc_max_horiz_dist(action.height)
+        max_pos = max_horiz_dist*dir_vec
+        max_pos = np.append(max_pos, action.height)
+
+        # baseline is with minimum dist target with reach_p=0
+        baseline_target = bottle_dist*dir_vec
+        baseline_target = np.append(baseline_target, action.height)
+
+        # initial position is some small proportion away from baseline
+        # acts like a "warm start" for IK solver
+        init_pos = self.init_reach_p * baseline_target
+        init_pos[2] = action.height  # don't scale contact height
+
+        # some position in between bottle pos and max reach
+        # ensure arm at least comes into contact with bottle
+        target_pos = (action.reach_p*(max_pos-baseline_target) + 
+            baseline_target)
+        
+        num_iters = int(T/action.velocity)
         # num_iters = int(T/action.velocity)
-        xy_traj = np.linspace(init_pos[:2], target_pos[:2], num=num_iters)
+        traj = np.linspace(init_pos, target_pos, num=num_iters)
 
-        # find iter where arm makes contact with arm, which should be minimizing horiz dist with bottle position
-        iters_till_contact = np.argmin(
-            np.linalg.norm(xy_traj-self.bottle.start_pos[:2], axis=1) )
-        z_traj = np.linspace(init_pos[2], target_pos[2], num=iters_till_contact)
+        return self.simulate_plan(traj, angle)
 
-        pos = np.copy(init_pos)
-        prevPose = np.copy(pos)
-        prevPose1 = init_pos
+
+    def simulate_plan(self, traj, angle=0):
+        """Run simulation with given end-effector position trajectory and 
+        desired yaw angle of EE.
+
+        Arguments:
+            traj {[type]} -- [description]
+
+        Keyword Arguments:
+            angle {int} -- [description] (default: {0})
+
+        Returns:
+            [type] -- [description]
+        """
+        next_target = traj[0]
+        prev_target = traj[0]
+        prev_arm_pos = traj[0]
+        self.arm.reset(target_pos=traj[0], angle=angle)
+
+        if isinstance(traj, np.ndarray):
+            num_iters = traj.shape[0]
+        else: num_iters = len(traj)
 
         # create new bottle object with parameters set beforehand
         self.bottle.create_sim_bottle()
         prev_bottle_pos = self.bottle.start_pos
-        bottle_vert_stopped = True
-        bottle_horiz_stopped = True
-        
-        self.arm.reset(target_pos=init_pos, angle=angle)
+        bottle_vert_stopped = False
+        bottle_horiz_stopped = False
 
         # iterate through action
         pos_change = 0  # init arbitrary
         iter = 0
-        t = 0
-        dist = np.linalg.norm(init_pos - target_pos)
         thresh = 0.001
+        EE_error = 0
 
         while (pos_change > thresh or iter < num_iters-1 or 
                 not (bottle_vert_stopped and bottle_horiz_stopped)) and (
                     iter < self.MAX_ITERS): 
-        # for iter in range(num_iters):
             iter += 1
             pos_i = min(iter, num_iters-1)
-            pos = xy_traj[pos_i,:]
-            z = z_traj[min(iter, iters_till_contact-1)]
-            pos = np.append(pos, z)
+            next_target = traj[pos_i]
 
             # set target joint positions of arm
-            joint_poses = self.arm.get_target_joints(pos, angle)
+            joint_poses = self.arm.get_target_joints(next_target, angle)
             for i in range(self.arm.num_joints):
                 p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
                                         jointIndex=i,
@@ -222,14 +228,19 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
+            arm_pos = np.array(ls[4])
             # Uncomment below to visualize lines of target and actual trajectory
-            # p.addUserDebugLine(prevPose, pos, [0, 0, 0.3], 1, self.trail_dur)
-            # p.addUserDebugLine(prevPose1, ls[4], [1, 0, 0], 1, self.trail_dur)
-            pos_change = np.linalg.norm(prevPose1 - np.array(ls[4]))
-            # dist = np.linalg.norm(np.array(ls[4]) - target_pos)
+            # also slows down simulation, so only run if trying to visualize
+            p.addUserDebugLine(prev_target, next_target, [0, 0, 0.3], 1, 1)
+            p.addUserDebugLine(arm_pos, prev_arm_pos, [1, 0, 0], 1, 
+               self.trail_dur)
+            
+            EE_error += np.linalg.norm(next_target - arm_pos)
+            
+            pos_change = np.linalg.norm(arm_pos - prev_arm_pos)
+            prev_arm_pos = arm_pos
 
-            prevPose = np.copy(pos)
-            prevPose1 = np.array(ls[4])
+            prev_target = np.copy(next_target)
 
             bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
                 self.bottle.bottle_id)
@@ -249,6 +260,4 @@ class Environment(object):
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return self.eval_cost(is_fallen, bottle_pos), np.array(bottle_pos[:2])
-        
-        # # print(bottle_vert_stopped)
+        return self.eval_cost(is_fallen, bottle_pos), np.array(bottle_pos[:2]), EE_error

@@ -6,19 +6,26 @@ from datetime import datetime
 import numpy as np
 import time
 import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sn
 
 from sim_objects import Bottle, Arm
 from environment import Environment, Action
 
 class MDP():
-    def __init__(self, env, run_full_mdp=True, target_type="const"):
+    INF = 1e10
+    def __init__(self, env, run_full_mdp=True, target_type="const", 
+            DEBUG=False, cost_based=True):
         if run_full_mdp: self.max_iters = 100
         else: self.max_iters = 10
         self.gamma = 0.8
-        # action space
-        self.A = init_action_space(env.bottle, run_full_mdp)
+        
         self.env = env
+        self.A = self.init_action_space(run_full_mdp)
+        self.env.arm.set_general_max_reach(self.contact_heights)
+        print("MAX_REACH: %.3f" % self.env.arm.MAX_REACH)
         self.target_type = target_type
+        self.DEBUG = DEBUG
 
         # self.sim_log = dict()  # (x,y,action) -> [start, end]
 
@@ -41,25 +48,37 @@ class MDP():
             stop=self.ymax+self.dy, 
             step=self.dy)
         self.H, self.W = len(self.Y), len(self.X)
-        self.OUT_OF_BOUNDS_COST = 20
 
-        # filtering out states out of bounuds
+        self.cost_based = cost_based
+        if self.cost_based:
+            self.OUT_OF_BOUNDS_COST = MDP.INF
+            self.V = np.ones((self.H, self.W)) * MDP.INF
+        else:
+            self.V = np.zeros((self.H, self.W)) # 1D array
+
+        # filter out unreachable states and set their value/cost
         self.valid_states = []
         for x in self.X:
             for y in self.Y:
                 dist_from_base = np.linalg.norm(
                     np.array([x,y]) - self.env.arm.base_pos[:2])
-                if (dist_from_base < self.env.arm.min_dist or 
-                    dist_from_base > env.arm.MAX_REACH):
-                    continue
+                too_close = (self.env.init_reach_p * dist_from_base < 
+                    self.env.arm.min_dist)
+                too_far = dist_from_base > self.env.arm.MAX_REACH
+                print(x, y, too_close, too_far)
+                if (too_close or too_far):
+                    (xi, yi) = self.state_to_idx((x,y))
+
+                    if self.cost_based: self.V[yi, xi] = self.OUT_OF_BOUNDS_COST
+                    else: self.V[yi, xi] = -1 * self.OUT_OF_BOUNDS_COST
+                    
                 else: self.valid_states.append((x,y))
 
-        self.V = np.ones((self.H, self.W)) * self.OUT_OF_BOUNDS_COST # 1D array
         # self.P = np.zeros((self.H * self.W, len(A)))  # policy as probabilities
+        print(self.V)
         self.P = [[0]*self.W for i in range(self.H)]
-        self.all_Vs = [self.V]
-        self.all_Ps = [self.P]
         
+
     def state_to_idx(self, state):
         (x, y) = state
         xi = int(round((x - self.xmin)/self.dx))
@@ -71,19 +90,21 @@ class MDP():
         if yi == self.H: yi -= 1
         return (xi, yi)
 
+
     def solve_mdp(self):
         np.savez("value_policy_iter_0", V=self.V, P=self.P)
-        for iter in range(self.max_iters):
+        for self.main_iter in range(self.max_iters):
             self.update_policy()
             self.evaluate_policy()
-            np.savez("results/value_policy_iter_%d" % (iter+1), V=self.V, P=self.P)
-            print("Percent complete: %.3f" % (iter / float(self.max_iters)))
+            np.savez("results/value_policy_iter_%d" % (self.main_iter+1), V=self.V, P=self.P)
+            print("Percent complete: %.3f" % (self.main_iter / float(self.max_iters)))
+
             
     def evaluate_policy(self):
         """Use current policy to estimate new value function
         """
         print("Evaluting Policy to Update Value Function...")
-        new_V = np.zeros_like(self.V)  # synchronous update for now
+        # new_V = np.ones_like(self.V) * self.OUT_OF_BOUNDS_COST
         num_states = float(len(self.valid_states))
         start = time.time()
         for (x,y) in self.valid_states:
@@ -92,25 +113,33 @@ class MDP():
                 target_type=self.target_type)
             (xi, yi) = self.state_to_idx((x,y))
             best_actions = self.P[yi][xi]
-            expected_cost = 0
+            expected_value = 0
             prob = 1./float(len(best_actions))  # uniform distb for best actions
             for ai in best_actions:
                 action = self.A[ai]
-                cost, ns = self.env.run_sim_stochastic(action)
+                # if desired x,y,z is out of reach, skip this action
+                # validity depends on contact height
+                target_dist = np.linalg.norm(np.array([x,y]))
+                if target_dist > self.env.arm.calc_max_horiz_dist(
+                        action.height):
+                    continue
+                
+                value, ns = self.env.run_sim_stochastic(action)
                 try:
                     (nxi, nyi) = self.state_to_idx(ns)
-                    expected_future_cost = self.V[nyi, nxi]
+                    expected_future_value = self.V[nyi, nxi]
                 except IndexError:
-                    expected_future_cost = self.V[yi, xi]
+                    if self.cost_based:
+                        expected_future_value = self.OUT_OF_BOUNDS_COST
+                    else: expected_future_value = -1 * self.OUT_OF_BOUNDS_COST
                     # expected_future_cost = 0
-                expected_cost += prob * (
-                    cost + self.gamma*expected_future_cost)
+                expected_value += prob * (
+                    value + self.gamma*expected_future_value)
                 
             # synchronous update
-            new_V[yi, xi] = expected_cost
+            self.V[yi, xi] = expected_value
         
-        self.all_Vs.append(new_V)
-        self.V = new_V
+        # self.V = new_V
 
         end = time.time()
         print("Total Runtime of Eval Policy: %.3f" % (end-start))
@@ -130,36 +159,84 @@ class MDP():
                 new_pos=[x, y, 0.1],
                 target_type=self.target_type)
             (xi, yi) = self.state_to_idx((x,y))
-            min_cost = 0
+            best_value = 0
             best_actions = []
-            # sim_log = []
+            sim_log = []
             for ai, action in enumerate(self.A):
-                cost, ns = self.env.run_sim(action)
-                # sim_log.append((action, (x,y), ns))
+                # if desired x,y,z is out of reach, skip this action
+                # validity depends on contact height
+                target_dist = np.linalg.norm(np.array([x,y]))
+                if (target_dist > self.env.arm.calc_max_horiz_dist(
+                        action.height)):
+                    continue
+        
+                value, ns = self.env.run_sim_stochastic(action)
                 
                 try:
                     (nxi, nyi) = self.state_to_idx(ns)
-                    expected_future_cost = self.V[nyi, nxi]
+                    expected_future_value = self.V[nyi, nxi]
                 except IndexError:
                     # just use value at current state if next state is out of  bounds
-                    expected_future_cost = self.V[yi, xi]
+                    # expected_future_cost = self.V[yi, xi]
+                    if self.cost_based:
+                        expected_future_value = self.OUT_OF_BOUNDS_COST
+                    else: expected_future_value = -1 * self.OUT_OF_BOUNDS_COST
                     # expected_future_cost = 0
 
-                total_cost = cost + self.gamma*expected_future_cost
-                if len(best_actions) == 0 or total_cost < min_cost:
-                    min_cost = total_cost
+                total_value = value + self.gamma*expected_future_value
+                sim_log.append((ns, value, expected_future_value, total_value))
+
+                if self.cost_based: found_better = (total_value < best_value)
+                else: found_better = (total_value > best_value)
+                if len(best_actions) == 0 or found_better:
+                    best_value = total_value
                     best_actions = [ai]
-                elif math.isclose(total_cost, min_cost, abs_tol=1e-6):
+                elif math.isclose(total_value, best_value, abs_tol=1e-6):
                     best_actions.append(ai)
 
             # self.plot_sim_results(sim_log)
+            if self.DEBUG:
+                filename = "logs/action_costs_of_%d_%d_iter_%d" % (xi,yi,self.main_iter)
+                np.save(filename, sim_log)
                 
             self.P[yi][xi] = best_actions
             end = time.time()
             print("Time(s) for one state: %.3f" % (end - start))
             total_time += (end-start)
-        self.all_Ps.append(self.P)
         print("Total Runtime of Update Policy: %.3f" % total_time)
+
+
+    def init_action_space(self, run_full_mdp):
+        A = []  # need to maintain order
+        self.da = math.pi/80
+        if run_full_mdp:
+            self.dh = 5
+            self.velocities = np.arange(start=0.1, stop=0.31, step=0.1)
+            self.angle_offsets = np.arange(start=-2*self.da, stop=3*self.da, step=self.da)
+        else:
+            self.dh = 3
+            self.velocities = np.arange(start=0.1, stop=0.21, step=0.05)
+            self.angle_offsets = np.arange(start=-2*self.da, stop=3*self.da, step=self.da)
+
+        self.contact_heights = np.arange(
+            start=self.env.bottle.height/self.dh, 
+            stop=self.env.bottle.height + self.env.bottle.height/self.dh, 
+            step=self.env.bottle.height/self.dh)
+        
+        self.dr = 0.25  # proportion of max reach
+        self.reach_ranges = np.arange(
+            start=self.dr, 
+            stop=1.0+self.dr,
+            step=self.dr)
+
+        for h in self.contact_heights:
+            for v in self.velocities:
+                for a in self.angle_offsets:
+                    for r in self.reach_ranges:
+                        action = Action(angle_offset=a, velocity=v, height=h, reach_p=r)
+                        A.append(action)
+                
+        return A
 
     def plot_sim_results(self, sim_log):
         # n = len(sim_log)
@@ -172,10 +249,48 @@ class MDP():
         plt.legend([str(action) for action in self.A], loc='upper left')
         plt.show()
 
+    def test_reach_p(self):
+        action = self.A[0]
+        action.velocity = 0.2
+        action.height = self.contact_heights[-1]
+        for x in self.X:
+            for y in self.Y:
+                # if desired x,y,z is out of reach, skip this action
+                # validity depends on contact height
+                dist_from_base = np.linalg.norm(np.array([x,y]))
+                max_reach = self.env.arm.calc_max_horiz_dist(action.height)
+                too_close = (self.env.init_reach_p * dist_from_base < 
+                    self.env.arm.min_dist)
+                too_far = dist_from_base > self.env.arm.MAX_REACH
+                if (too_close or too_far):
+                    print("%.2f,%.2f,%.2f out of reach, skipping.." % (x,y,action.height))
+                    continue
+                
+                self.env.change_bottle_pos([x, y, 0.1], 
+                    target_type=self.target_type)
+                for rp in self.reach_ranges:
+                    print("%.2f, %.2f, reach: %.1f" % (x,y,rp))
+                    action.reach_p = rp
+                    cost, ns = self.env.run_sim(action)
+
+    def test_action_space(self):
+        x = 0.80
+        y = 0.10
+        # best action was 20
+        xi, yi = self.state_to_idx((x,y))
+        self.env.change_bottle_pos([x, y, 0.1], target_type=self.target_type)
+        for ai, action in enumerate(self.A):
+            print(ai, action)
+            cost, ns = self.env.run_sim(action)
+            print(cost)
+
     def view_state_space(self):
         # visualize 
         action= self.A[0]
-        action.velocity = 0.3
+        action.velocity = 0.1
+        action.reach_p = 0.25
+        x = self.X[5]
+        y = self.Y[7]
         for x in self.X:
             for y in self.Y:
                 dist_from_base = np.linalg.norm(
@@ -190,7 +305,7 @@ class MDP():
 
 def main():
     # initialize simulator environment
-    VISUALIZE = False
+    VISUALIZE = True
     LOGGING = False
     GRAVITY = -9.81
     RUN_FULL_MDP = False
@@ -201,7 +316,7 @@ def main():
     planeId = p.loadURDF(Environment.plane_urdf_filepath)
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
-        log_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "sim_run.mp4")
+        log_id = p.startStateLogging(p.STATE_LOGGING_VIDEO_MP4, "fully_functional.mp4")
 
     # starting end-effector pos, not base pos
     EE_start_pos = np.array([0.2, 0.2, 0.3]).astype(float)
@@ -215,11 +330,16 @@ def main():
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
     
     N = 700
+    cost_based = False
     env = Environment(arm, bottle, is_viz=VISUALIZE, N=N, 
-        run_full_mdp=RUN_FULL_MDP)
+        run_full_mdp=RUN_FULL_MDP, cost_based=cost_based)
 
-    solver = MDP(env, RUN_FULL_MDP)
-    solver.solve_mdp()
+    solver = MDP(env, RUN_FULL_MDP, DEBUG=True, target_type="const", 
+        cost_based=cost_based)
+    # solver.test_action_space()
+    # solver.solve_mdp()
+    # solver.test_reach_p()
+    examine_results(mdp=solver)
     # solver.view_state_space()
     # check_results(env, mdp=solver)
     # test_bottle_dynamics(env)
@@ -244,32 +364,6 @@ def check_results(env: Environment, mdp: MDP):
 
     print("Policies:")
     for P in policies: print(P)
-        
-
-def init_action_space(bottle, run_full_mdp):
-    A = []  # need to maintain order
-    da = math.pi/80
-    if run_full_mdp:
-        dh = 5
-        velocities = np.arange(start=0.1, stop=0.31, step=0.1)
-        angle_offsets = np.arange(start=-2*da, stop=3*da, step=da)
-    else:
-        dh = 3
-        velocities = np.arange(start=0.1, stop=0.31, step=0.1)
-        angle_offsets = np.arange(start=-da, stop=2*da, step=da)
-
-    contact_heights = np.arange(
-        start=bottle.height/dh, 
-        stop=bottle.height + bottle.height/dh, 
-        step=bottle.height/dh)
-    
-    for h in contact_heights:
-        for v in velocities:
-            for a in angle_offsets:
-                action = Action(angle_offset=a, velocity=v, height=h)
-                A.append(action)
-            
-    return A
 
 
 def test_state_to_idx(mdp: MDP):
@@ -286,6 +380,16 @@ def test_state_to_idx(mdp: MDP):
     x, y = mdp.xmax + mdp.dx*0.9, mdp.ymax + mdp.dy*0.9
     print(mdp.state_to_idx((x,y)))
 
+def plot_heat_map(mat, horiz_ticks, vert_ticks, title, xlabel, ylabel):
+    df_cm = pd.DataFrame(mat, horiz_ticks, vert_ticks)
+    # plt.figure(figsize=(10,7))
+    sn.set(font_scale=1.4) # for label size
+    cmap = sn.cm.rocket_r
+    sn.heatmap(df_cm, annot=True, annot_kws={"size": 16}, cmap=cmap) # font size
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.show()
 
 def test_bottle_dynamics(env):
     # [-0.6999999999999993, -0.29999999999999893, 0.1]
@@ -297,6 +401,60 @@ def test_bottle_dynamics(env):
     env.run_sim(action)
 
 
+def examine_results(mdp: MDP):
+    horiz_ticks = ["%.2f" % x for x in mdp.X]
+    vert_ticks = ["%.2f" % y for y in mdp.Y]
+    # for iter in range(1,10):
+    #     data = np.load("results/value_policy_iter_%d.npz" % iter, allow_pickle=True)
+    #     if iter > 1:
+    #         prev_data = np.load("results/value_policy_iter_%d.npz" % (iter-1), allow_pickle=True)
+    #     else: prev_data = mdp.V
+    #     V, P = data["V"], data["P"]
+        
+    #     plot_heat_map(V, horiz_ticks=horiz_ticks, vert_ticks=vert_ticks, 
+    #         title="Iter %d V-table" % iter, xlabel="X", ylabel="Y")
+    #     print(np.array_str(V, suppress_small=True, precision=2))
+    #     print(np.array_str(P, suppress_small=True, precision=2))
+    # target = np.array([0.65, 0.55, 0.1])
+    # txi, tyi = mdp.state_to_idx((target[1], target[0]))
+    # print(txi, tyi)
+    # print(np.array_str(V, suppress_small=True, precision=2))
+    # print(np.array_str(P, suppress_small=True, precision=2))
+
+    iter = 9
+    data = np.load("good_results_arm_needs_tuning/value_policy_iter_%d.npz" % iter, allow_pickle=True)
+    V, P = data["V"], data["P"]
+    for (x, y) in mdp.valid_states:
+        print("x:%.2f, y:%.2f:" % (x, y))
+        (xi, yi) = mdp.state_to_idx((x,y))
+        best_actions = P[yi,xi]
+        print(best_actions)
+        if isinstance(best_actions, list):
+            for ai in best_actions:
+                action = mdp.A[ai]
+                print(action)
+                mdp.env.change_bottle_pos([x, y, 0.1], target_type=mdp.target_type)
+                cost, ns = mdp.env.run_sim_stochastic(action)
+        else:
+            ai = best_actions
+            action = mdp.A[ai]
+            print(action)
+            mdp.env.change_bottle_pos([x, y, 0.1], target_type=mdp.target_type)
+            cost, ns = mdp.env.run_sim_stochastic(action)
+
+    #         try:
+    #             (nxi, nyi) = mdp.state_to_idx(ns)
+    #             expected_future_cost = V[nyi, nxi]
+    #         except IndexError:
+    #             # just use value at current state if next state is out of  bounds
+    #             expected_future_cost = V[yi, xi]
+    #             # expected_future_cost = 0
+
+    #         total_cost = cost + mdp.gamma*expected_future_cost
+    #         print("nyi, nxi: %d, %d, Y: %d, X: %d, cost:%.2f, future:%.2f" 
+    #             % (nyi, nxi, mdp.H, mdp.W, cost, expected_future_cost))
+
+            
 def test(env, action):
     X = [0.5, 1.5]
     Y = np.arange(start=-0.5, stop=1.5, step=0.1)
@@ -305,6 +463,8 @@ def test(env, action):
         for y in Y:
             for v in velocities:
                 action.velocity = v
+                print(v)
+                action.reach_p = 1
                 dist_from_base = np.linalg.norm(
                     np.array([x,y]) - env.arm.base_pos[:2])
                 if (dist_from_base < env.arm.min_dist or 
