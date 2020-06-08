@@ -3,6 +3,7 @@ import pybullet_data
 import time
 import math
 from datetime import datetime
+import numpy  as np
 
 # clid = p.connect(p.SHARED_MEMORY)
 p.connect(p.GUI)
@@ -66,9 +67,9 @@ while 1:
     p.stepSimulation()
 
   for i in range(1):
-    pos = [-0.4, 0.2 * math.cos(t), 0. + 0.2 * math.sin(t)]
+    pos = [0.08, 0, 0.1*t + 0.8]
     #end effector points down, not up (in case useOrientation==1)
-    orn = p.getQuaternionFromEuler([0, -math.pi, 0])
+    orn = p.getQuaternionFromEuler([-math.pi/2, 0, 0-math.pi/2])
 
     if (useNullSpace == 1):
       if (useOrientation == 1):
@@ -117,6 +118,9 @@ while 1:
   if (hasPrevPose):
     p.addUserDebugLine(prevPose, pos, [0, 0, 0.3], 1, trailDuration)
     p.addUserDebugLine(prevPose1, ls[4], [1, 0, 0], 1, trailDuration)
+    ls_prev = p.getLinkState(kukaId, kukaEndEffectorIndex-1)
+    print(np.linalg.norm(np.array(ls_prev[4]) - np.array(ls[4])))
+    print(ls[4])
   prevPose = pos
   prevPose1 = ls[4]
   hasPrevPose = 1
