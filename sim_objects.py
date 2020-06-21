@@ -25,7 +25,8 @@ class Bottle:
         self.mass = 0.5        # kg
         self.default_fric = 0.1  # plastic-wood dynamic friction
         self.lat_fric = self.default_fric
-        self.min_fill = 0.2
+        self.min_fill = 0.3
+        self.max_fill = 1.0
 
         # sets mass and center of mass
         self.bottle_mass = None
@@ -50,6 +51,7 @@ class Bottle:
 
     def com_from_fill(self, fill_prop):
         # calculate center of mass of water bottle
+        fill_prop = np.clip(fill_prop, self.min_fill, self.max_fill)
         water_height = self.height * fill_prop
         if fill_prop <= self.min_fill:
             # if bottle empty, com is just center of cylinder
@@ -94,11 +96,11 @@ class Arm:
         # NOTE: taken from example:
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
         # lower limits for null space
-        # self.ll = [-.967, -2, -2.96, 0.19, -2.96, -2.09, -3.05]
-        self.ll = [-PI, -PI, -PI, -PI, -PI, -PI, -PI]
+        self.ll = np.array([-.967, -2, -2.96, 0.19, -2.96, -2.09, -3.05])
+        # self.ll = [-PI, -PI, -PI, -PI, -PI, -PI, -PI]
         # upper limits for null space
-        # self.ul = [.967, 2, 2.96, 2.29, 2.96, 2.09, 3.05]
-        self.ul = [PI, PI, PI, PI, PI, PI, PI]
+        self.ul = np.array([.967, 2, 2.96, 2.29, 2.96, 2.09, 3.05])
+        # self.ul = [PI, PI, PI, PI, PI, PI, PI]
         # joint ranges for null space
         self.jr = [5.8, 4, 5.8, 4, 5.8, 4, 6]
         # restposes for null space
@@ -126,9 +128,18 @@ class Arm:
         self.num_joints = 7
         self.ikSolver = 0  # id of solver algorithm provided by pybullet
 
-        self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
+        for i in range(self.num_joints):
+            p.resetJointState(self.kukaId, i, self.rp[i])
 
-    def reset(self, target_pos=None, angle=0):
+        self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
+        self.joint_pose = np.copy(self.init_joints)
+
+    def reset(self, joint_pose):
+        self.joint_pose = joint_pose
+        for i in range(self.num_joints):
+            p.resetJointState(self.kukaId, i, self.joint_pose[i])
+
+    def resetEE(self, target_pos=None, angle=0):
         p.resetBasePositionAndOrientation(
             self.kukaId, self.base_pos, self.start_ori)
 
@@ -138,15 +149,13 @@ class Arm:
         #     p.resetJointState(self.kukaId, i, 0)
 
         if target_pos is None:
-            joints = self.init_joints
+            self.joint_pose = self.init_joints
         else:
-            joints = self.get_target_joints(target_pos, angle=angle)
+            self.joint_pose = self.get_target_joints(target_pos, angle=angle)
             # print(joints)
 
         for i in range(self.num_joints):
-            p.resetJointState(self.kukaId, i, joints[i])
-
-        ls = p.getLinkState(self.kukaId, self.EE_idx)
+            p.resetJointState(self.kukaId, i, self.joint_pose[i])
 
     def calc_max_horiz_dist(self, contact_height):
         hprime = abs(self.L1 - contact_height)
@@ -166,6 +175,19 @@ class Arm:
         self.MAX_REACH = self.calc_max_horiz_dist(closest_h)
 
     def get_target_joints(self, target_EE_pos, angle):
+        """Given target EE position, runs pybullet's internal inverse
+        kinematics to solve for joint pose that minimizes dist error
+        of EE position. Ensures that returned joint pose lies within
+        joint limits of arm, which prevents undefinend simulation behavior.
+
+        Args:
+            target_EE_pos ([type]): [description]
+            angle ([type]): [description]
+
+        Returns:
+            [type]: [description]
+        """
+        assert(len(self.ll) == len(self.ul) == len(self.jr) == len(self.rp))
         # joint_poses = p.calculateInverseKinematics(
         #     self.kukaId,
         #     self.EE_idx,
@@ -173,7 +195,8 @@ class Arm:
         #     lowerLimits=self.ll,
         #     upperLimits=self.ul,
         #     jointRanges=self.jr,
-        #     restPoses=self.rp)s
+        #     restPoses=self.rp)
+        # joint_poses = np.clip(joint_poses, self.ll, self.ul)
         orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
         joint_poses = list(p.calculateInverseKinematics(
             self.kukaId,
@@ -190,9 +213,8 @@ class Arm:
         #     target_EE_pos,
         #     orn,
         #     jointDamping=self.jd,
-        # solver=self.ikSolver)
+        #     solver=self.ikSolver)
         # maxNumIterations=100,
         # residualThreshold=.01)
 
         return joint_poses
-
