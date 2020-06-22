@@ -6,8 +6,8 @@ from datetime import datetime
 import numpy as np
 import time
 import matplotlib.pyplot as plt
-import pandas as pd
-import seaborn as sn
+# import pandas as pd
+# import seaborn as sn
 import heapq
 
 from sim_objects import Bottle, Arm
@@ -53,8 +53,17 @@ while state != start:
 """
 
 
+class Node(object):
+    def __init__(self, cost, state):
+        self.cost = cost
+        self.state = state
+
+    def __lt__(self, other):
+        return self.cost < other.cost
+
+
 class NaivePlanner():
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=2):
+    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1):
         # state = [x,y,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -79,16 +88,31 @@ class NaivePlanner():
         # self.max_joint_indexes = (
         #     (self.env.arm.ul - self.env.arm.ll) / self.A.da_rad).astype(int)
 
+    def debug_view_state(self, state):
+        joint_pose = state[2:]
+        bx, by = state[:2]
+        self.env.arm.reset(joint_pose)
+        link_states = p.getLinkStates(self.env.arm.kukaId, range(7))
+        eex, eey = link_states[-1][4][:2]
+        dist = ((bx - eex) ** 2 + (by - eey) ** 2) ** 0.5
+        print(dist, bx, by)
+
     def plan(self):
-        open_set = [(0, self.start)]
+        open_set = [Node(0, self.start)]
         closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
         transitions = dict()
+        num_expansions = 0
 
         goal_expanded = False
         while not goal_expanded and len(open_set) > 0:
-            _, state = heapq.heappop(open_set)
+            num_expansions += 1
+            n = heapq.heappop(open_set)
+            state = n.state
+            # print("Expanded: %.2f" % n.cost, self.heuristic(state))
+            # self.debug_view_state(state)
+            # print(self.heuristic(state))
             state_key = self.state_to_key(state)
             # duplicates are possible since heapq doesn't handle same state but diff costs
             if state_key in closed_set:
@@ -106,8 +130,11 @@ class NaivePlanner():
                 cur_joints = state[2:]
 
                 # run deterministic simulation for now
-                trans_cost, next_state = self.env.run_sim(
-                    action=dq, init_joints=cur_joints)
+                trans_cost, next_bottle_pos = self.env.run_sim(
+                    action=dq, init_joints=cur_joints,
+                    bottle_pos=[state[0], state[1], 0.1])
+                next_joint_pose = self.env.arm.joint_pose
+                next_state = np.concatenate([next_bottle_pos, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
 
                 if next_state_key in closed_set:
@@ -119,9 +146,11 @@ class NaivePlanner():
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * f
-                    heapq.heappush((overall_cost, next_state), open_set)
+                    heapq.heappush(open_set, Node(overall_cost, next_state))
+                    # print(overall_cost, f)
                     transitions[next_state_key] = (state_key, ai)
 
+        print("States Expanded: %d" % num_expansions)
         if not goal_expanded:
             return [], []
         # reconstruct path
@@ -137,14 +166,29 @@ class NaivePlanner():
 
         # need to reverse since backwards ordering
         planned_path.reverse()
-        policy.reverese()
+        policy.reverse()
         return planned_path, policy
+
+    def dist_arm_to_bottle(self, bottle_pos, joint_pose):
+        bx, by = bottle_pos
+        self.env.arm.reset(joint_pose)
+        link_positions = self.env.arm.get_link_positions()
+        # min_sq_dist = None
+        # for (lx, ly, lz) in link_positions:
+        #     sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
+        #     if min_sq_dist is None or sq_dist < min_sq_dist:
+        #         min_sq_dist = sq_dist
+        # return math.sqrt(min_sq_dist)
+        (lx, ly, lz) = link_positions[-1]
+        ee_link_dist = ((bx - lx) ** 2 + (by - ly) ** 2) ** 0.5
+        return ee_link_dist
 
     def heuristic(self, state):
         x, y = state[0:2]
         gx, gy = self.goal[0:2]
         dist_to_goal = (x - gx) ** 2 + (y - gy) ** 2
-        return dist_to_goal
+        dist_arm_to_bottle = self.dist_arm_to_bottle((x, y), state[2:])
+        return 5 * dist_to_goal + dist_arm_to_bottle
 
     def reached_goal(self, state):
         x, y = state[0:2]
@@ -158,10 +202,11 @@ class NaivePlanner():
         joints_i = ((joints - self.env.arm.ul) / self.da).astype(int)
         xi = int((x - self.xbounds[0]) / self.dx)
         yi = int((y - self.ybounds[0]) / self.dy)
-        return (xi, yi, joints_i)  # tuple of ints as unique id
+        return (xi, yi, tuple(joints_i))  # tuple of ints as unique id
 
     def key_to_state(self, key):
         (xi, yi, joints_i) = key
+        joints_i = np.array(joints_i)
         x = (xi * self.dx) + self.xbounds[0]
         y = (yi * self.dy) + self.ybounds[0]
         joints = (joints_i * self.da) + self.env.arm.ul
@@ -173,7 +218,8 @@ class NaivePlanner():
 
 
 def main():
-    VISUALIZE = False
+    VISUALIZE = True
+    REPLAY_RESULTS = True
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
@@ -189,20 +235,28 @@ def main():
             p.STATE_LOGGING_VIDEO_MP4, "fully_functional.mp4")
 
     # bottle
-    bottle_start_pos = np.array([0.5, 0.4, 0.1]).astype(float)
-    bottle_goal_pos = np.array([0.7, 0.3, 0.1]).astype(float)
+    bottle_start_pos = np.array([0.5, 0.5, 0.1]).astype(float)
+    bottle_goal_pos = np.array([0.2, 0.6, 0.1]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
+    if VISUALIZE:
+        p.addUserDebugLine(bottle_goal_pos,
+                           bottle_goal_pos +
+                           np.array([0, 0, 0.5]),
+                           [0, 0, 1], 1,
+                           0)
+
     # starting end-effector pos, not base pos
     # NOTE: just temporarily setting arm to starting bottle position with some offset
-    offset = -np.array([0.05, 0, 0])
-    EE_start_pos = bottle_start_pos + offset
+    # offset = -np.array([0.05, 0, 0])
+    # EE_start_pos = bottle_start_pos + offset
+    EE_start_pos = np.array([0.5, 0.3, 0.2])
     base_start_ori = np.array([0, 0, 0, 1]).astype(float)
     arm = Arm(EE_start_pos=EE_start_pos,
               start_ori=base_start_ori,
               kukaId=kukaId)
-    start_joints = arm.get_target_joints()
+    start_joints = arm.joint_pose
 
     N = 500
     env = Environment(arm, bottle, is_viz=VISUALIZE, N=N)
@@ -212,10 +266,27 @@ def main():
     xbounds = [0.4, 0.9]
     ybounds = [0.1, 0.9]
     dist_thresh = 1e-1
-    eps = 2
-    planner = NaivePlanner(start, goal, env, xbounds,
-                           ybounds, dist_thresh, eps)
-    state_path, policy = planner.plan()
+    eps = 1
+
+    if not REPLAY_RESULTS:
+        planner = NaivePlanner(start, goal, env, xbounds,
+                               ybounds, dist_thresh, eps)
+        state_path, policy = planner.plan()
+        np.savez("results", state_path=state_path, policy=policy)
+
+    else:
+        results = np.load("results.npz")
+        policy = results["policy"]
+        if not VISUALIZE:
+            print("Trying to playback plan without visualizing!")
+            exit()
+        A = ActionSpace(num_DOF=arm.num_joints)
+        print(policy)
+        next_bottle_pos = bottle_start_pos
+        for dq in policy:
+            # run deterministic simulation for now
+            trans_cost, next_bottle_pos = env.run_sim(
+                action=dq, bottle_pos=[next_bottle_pos[0], next_bottle_pos[1], 0.1])
 
 
 if __name__ == "__main__":

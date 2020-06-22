@@ -60,12 +60,19 @@ class Bottle:
         else:
             return np.array([0, 0, water_height * 0.4])
 
-    def create_sim_bottle(self):
-        self.bottle_id = p.createMultiBody(
-            baseMass=self.bottle_mass,
-            baseInertialFramePosition=self.inertial_shift,
-            baseCollisionShapeIndex=self.col_id,
-            basePosition=self.start_pos)
+    def create_sim_bottle(self, pos=None):
+        if pos is not None:
+            self.bottle_id = p.createMultiBody(
+                baseMass=self.bottle_mass,
+                baseInertialFramePosition=self.inertial_shift,
+                baseCollisionShapeIndex=self.col_id,
+                basePosition=pos)
+        else:
+            self.bottle_id = p.createMultiBody(
+                baseMass=self.bottle_mass,
+                baseInertialFramePosition=self.inertial_shift,
+                baseCollisionShapeIndex=self.col_id,
+                basePosition=self.start_pos)
         p.changeDynamics(
             bodyUniqueId=self.bottle_id,
             linkIndex=-1,  # no links, -1 refers to bottle base
@@ -102,10 +109,10 @@ class Arm:
         self.ul = np.array([.967, 2, 2.96, 2.29, 2.96, 2.09, 3.05])
         # self.ul = [PI, PI, PI, PI, PI, PI, PI]
         # joint ranges for null space
-        self.jr = [5.8, 4, 5.8, 4, 5.8, 4, 6]
+        self.jr = np.array([5.8, 4, 5.8, 4, 5.8, 4, 6])
         # restposes for null space
         # self.rp = [0, 0, 0, 0.5 * math.pi, 0, -math.pi * 0.5 * 0.66, 0]
-        self.rp = [math.pi/4, (90 + 15)*math.pi/180, 0, 0, 0, 0, 0]
+        self.rp = np.array([math.pi/4, (90 + 15)*math.pi/180, 0, 0, 0, 0, 0])
         # joint damping coefficents
         self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
@@ -125,14 +132,19 @@ class Arm:
         self.velocity_gain = 0.5
 
         self.EE_idx = 6
-        self.num_joints = 7
+        self.num_joints = p.getNumJoints(self.kukaId)
         self.ikSolver = 0  # id of solver algorithm provided by pybullet
 
-        for i in range(self.num_joints):
-            p.resetJointState(self.kukaId, i, self.rp[i])
-
         self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
-        self.joint_pose = np.copy(self.init_joints)
+        self.reset(joint_pose=self.init_joints)
+
+    def update_joint_pose(self):
+        joint_states = p.getJointStates(self.kukaId, range(self.num_joints))
+        self.joint_pose = np.array([state[0] for state in joint_states])
+
+    def get_link_positions(self):
+        link_states = p.getLinkStates(self.kukaId, range(self.num_joints))
+        return [state[4] for state in link_states]
 
     def reset(self, joint_pose):
         self.joint_pose = joint_pose
@@ -154,8 +166,7 @@ class Arm:
             self.joint_pose = self.get_target_joints(target_pos, angle=angle)
             # print(joints)
 
-        for i in range(self.num_joints):
-            p.resetJointState(self.kukaId, i, self.joint_pose[i])
+        self.reset(self.joint_pose)
 
     def calc_max_horiz_dist(self, contact_height):
         hprime = abs(self.L1 - contact_height)
@@ -188,25 +199,25 @@ class Arm:
             [type]: [description]
         """
         assert(len(self.ll) == len(self.ul) == len(self.jr) == len(self.rp))
-        # joint_poses = p.calculateInverseKinematics(
-        #     self.kukaId,
-        #     self.EE_idx,
-        #     target_EE_pos,
-        #     lowerLimits=self.ll,
-        #     upperLimits=self.ul,
-        #     jointRanges=self.jr,
-        #     restPoses=self.rp)
-        # joint_poses = np.clip(joint_poses, self.ll, self.ul)
-        orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
-        joint_poses = list(p.calculateInverseKinematics(
+        joint_poses = p.calculateInverseKinematics(
             self.kukaId,
             self.EE_idx,
             target_EE_pos,
-            orn,
-            lowerLimits=self.ll,
-            upperLimits=self.ul,
-            jointRanges=self.jr,
-            restPoses=self.rp))
+            lowerLimits=self.ll.tolist(),
+            upperLimits=self.ul.tolist(),
+            jointRanges=self.jr.tolist(),
+            restPoses=self.rp.tolist())
+        # joint_poses = np.clip(joint_poses, self.ll, self.ul)
+        orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
+        # joint_poses = list(p.calculateInverseKinematics(
+        #     self.kukaId,
+        #     self.EE_idx,
+        #     target_EE_pos,
+        #     orn,
+        #     lowerLimits=self.ll,
+        #     upperLimits=self.ul,
+        #     jointRanges=self.jr,
+        #     restPoses=self.rp))
         # joint_poses = p.calculateInverseKinematics(
         #     self.kukaId,
         #     self.EE_idx,

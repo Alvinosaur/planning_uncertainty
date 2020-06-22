@@ -26,7 +26,7 @@ class ActionSpace():
             no_change, pos_moves, neg_moves
         ])
         self.num_actions = self.actions_mat.shape[0]
-        self.action_ids = np.linspace(start=0, stop=self.num_actions)
+        self.action_ids = list(range(self.num_actions))
 
     def get_action(self, id):
         assert(isinstance(id, int))
@@ -56,13 +56,14 @@ class Environment(object):
         # if no object moves more than this thresh, terminate sim early
         self.no_movement_thresh = 0.001
         self.min_iters = 10  # enough iters to let action execute fully
-        self.max_iters = 50  # max number of iters in case objects oscillating
+        self.max_iters = 150  # max number of iters in case objects oscillating
         # number of random samples of internal params for stochastic simulation
         self.num_rand_samples = 10
 
         # cost parameters
         self.target_bottle_pos = np.zeros((3,))
         self.FALL_COST = Environment.INF
+        self.MOVE_COST = 0  # 1
         self.dist_cost_scale = 100
 
         # Normal distribution of internal bottle params
@@ -81,7 +82,7 @@ class Environment(object):
         # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
 
         # any step incurs penalty of 1, but if falls, extra huge penalty
-        return max(1, self.FALL_COST*is_fallen)
+        return max(self.MOVE_COST, self.FALL_COST*is_fallen)
 
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
@@ -113,7 +114,7 @@ class Environment(object):
         return (expected_cost / float(self.num_rand_samples),
                 expected_next_state / float(self.num_rand_samples))
 
-    def run_sim(self, action, init_joints=None):
+    def run_sim(self, action, init_joints=None, bottle_pos=None):
         """Deterministic simulation where all parameters are already set and 
         known.
 
@@ -127,9 +128,9 @@ class Environment(object):
         joint_traj = np.linspace(init_joints,
                                  target_joint_pose, num=self.min_iters)
 
-        return self.simulate_plan(joint_traj)
+        return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos)
 
-    def simulate_plan(self, joint_traj):
+    def simulate_plan(self, joint_traj, bottle_pos):
         """Run simulation with given joint-space trajectory.
 
         Arguments:
@@ -139,11 +140,15 @@ class Environment(object):
             [type] -- [description]
         """
         self.arm.reset(joint_traj[0, :])
-        prev_arm_pos = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
+        prev_arm_pos = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)[4]
 
         # create new bottle object with parameters set beforehand
-        self.bottle.create_sim_bottle()
-        prev_bottle_pos = self.bottle.start_pos
+        if bottle_pos is not None:
+            self.bottle.create_sim_bottle(bottle_pos)
+            prev_bottle_pos = bottle_pos
+        else:
+            self.bottle.create_sim_bottle()
+            prev_bottle_pos = self.bottle.start_pos
         bottle_vert_stopped = False
         bottle_horiz_stopped = False
         bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped
@@ -169,11 +174,12 @@ class Environment(object):
                                             velocityGain=self.arm.velocity_gain)
             # run one sim iter
             p.stepSimulation()
+            self.arm.update_joint_pose()
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
-                arm_pos = np.array(ls[4])
+                arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory
                 # also slows down simulation, so only run if trying to visualize
                 # p.addUserDebugLine(prev_target, next_target, [0, 0, 0.3], 1, 1)
@@ -192,6 +198,7 @@ class Environment(object):
                 np.linalg.norm(
                     np.array(bottle_pos)[:2] - np.array(prev_bottle_pos)[:2]),
                 0.0, abs_tol=1e-05)
+            bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped
             prev_bottle_pos = bottle_pos
 
             iter += 1
