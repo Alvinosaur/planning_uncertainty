@@ -4,7 +4,6 @@ import time
 import math
 from datetime import datetime
 import numpy as np
-import time
 import matplotlib.pyplot as plt
 # import pandas as pd
 # import seaborn as sn
@@ -164,6 +163,7 @@ class NaivePlanner():
         planned_path = []
         state_key = self.state_to_key(self.goal)
         start_key = self.state_to_key(self.start)
+        # NOTE: planned_path does not include initial starting pose!
         while state_key != start_key:
             planned_path.append(self.key_to_state(state_key))
             prev, ai = transitions[state_key]
@@ -176,7 +176,7 @@ class NaivePlanner():
         return planned_path, policy
 
     def dist_arm_to_bottle(self, bottle_pos, joint_pose):
-        bx, by = bottle_pos
+        bottle_pos = bottle_pos + self.env.bottle.center_of_mass
         self.env.arm.reset(joint_pose)
         link_positions = self.env.arm.get_link_positions()
         # min_sq_dist = None
@@ -185,16 +185,16 @@ class NaivePlanner():
         #     if min_sq_dist is None or sq_dist < min_sq_dist:
         #         min_sq_dist = sq_dist
         # return math.sqrt(min_sq_dist)
-        (lx, ly, lz) = link_positions[-1]
-        ee_link_dist = ((bx - lx) ** 2 + (by - ly) ** 2) ** 0.5
+        EE_pos = np.array(link_positions[-1])
+        ee_link_dist = np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
         return ee_link_dist
 
     def heuristic(self, state):
-        x, y, _ = self.bottle_pos_from_state(state)
-        gx, gy, _ = self.bottle_pos_from_state(self.goal)
-        dist_to_goal = (x - gx) ** 2 + (y - gy) ** 2
+        bottle_pos = np.array(self.bottle_pos_from_state(state))
+        goal_bottle_pos = np.array(self.bottle_pos_from_state(self.goal))
+        dist_to_goal = np.linalg.norm(bottle_pos[:2] - goal_bottle_pos[:2])
         joints = self.joint_pose_from_state(state)
-        dist_arm_to_bottle = self.dist_arm_to_bottle((x, y), joints)
+        dist_arm_to_bottle = self.dist_arm_to_bottle(bottle_pos, joints)
         return 5 * dist_to_goal + dist_arm_to_bottle
 
     def reached_goal(self, state):
@@ -276,89 +276,3 @@ def test_state_indexing():
     assert(NaivePlanner.bottle_ori_from_state(state) == [3, 4, 5, 6])
     assert(NaivePlanner.joint_pose_from_state(
         state) == [7, 8, 9, 10, 11, 12, 13])
-
-
-def main():
-    VISUALIZE = True
-    REPLAY_RESULTS = True
-    LOGGING = False
-    GRAVITY = -9.81
-    if VISUALIZE:
-        p.connect(p.GUI)  # or p.DIRECT for nongraphical version
-    else:
-        p.connect(p.DIRECT)
-    p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    p.setGravity(0, 0, GRAVITY)
-    planeId = p.loadURDF(Environment.plane_urdf_filepath,
-                         basePosition=[0, 0, 0])
-    kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
-    if LOGGING and VISUALIZE:
-        log_id = p.startStateLogging(
-            p.STATE_LOGGING_VIDEO_MP4, "fully_functional.mp4")
-
-    # bottle
-    bottle_start_pos = np.array(
-        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
-    bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
-    bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
-
-    if VISUALIZE:
-        p.addUserDebugLine(bottle_goal_pos,
-                           bottle_goal_pos +
-                           np.array([0, 0, 0.5]),
-                           [0, 0, 1], 1,
-                           0)
-
-    # starting end-effector pos, not base pos
-    # NOTE: just temporarily setting arm to starting bottle position with some offset
-    # offset = -np.array([0.05, 0, 0])
-    # EE_start_pos = bottle_start_pos + offset
-    EE_start_pos = np.array([0.5, 0.3, 0.2])
-    base_start_ori = np.array([0, 0, 0, 1]).astype(float)
-    arm = Arm(EE_start_pos=EE_start_pos,
-              start_ori=base_start_ori,
-              kukaId=kukaId)
-    start_joints = arm.joint_pose
-
-    N = 500
-    env = Environment(arm, bottle, is_viz=VISUALIZE, N=N)
-    start = np.concatenate(
-        [bottle_start_pos,  bottle_start_ori, start_joints])
-    # goal joints are arbitrary and populated later in planner
-    goal = np.concatenate(
-        [bottle_goal_pos,  bottle_start_ori, [0]*arm.num_joints])
-    xbounds = [0.4, 0.9]
-    ybounds = [0.1, 0.9]
-    dist_thresh = 1e-1
-    eps = 1
-
-    if not REPLAY_RESULTS:
-        planner = NaivePlanner(start, goal, env, xbounds,
-                               ybounds, dist_thresh, eps)
-        state_path, policy = planner.plan()
-        np.savez("results", state_path=state_path, policy=policy)
-
-    else:
-        results = np.load("results.npz")
-        policy = results["policy"]
-        if not VISUALIZE:
-            print("Trying to playback plan without visualizing!")
-            exit()
-        A = ActionSpace(num_DOF=arm.num_joints)
-        # print(policy)
-        bottle_pos = bottle_start_pos
-        bottle_ori = bottle_start_ori
-        for dq in policy:
-            # run deterministic simulation for now
-            # init_joints not passed-in because current joint state
-            # maintained by simulator
-            trans_cost, bottle_pos, bottle_ori = env.run_sim(
-                action=dq, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
-            print(trans_cost)
-
-
-if __name__ == "__main__":
-    main()
-    # test_quaternion_discretization()
-    # test_state_indexing()
