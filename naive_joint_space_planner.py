@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 # import pandas as pd
 # import seaborn as sn
 import heapq
+from pyquaternion import Quaternion
 
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace
@@ -63,8 +64,13 @@ class Node(object):
 
 
 class NaivePlanner():
+    # discretize continuous state space
+    dx = dy = dz = 0.1
+    dpos = np.array([dx, dy, dz])
+    qbins = 180.0 / 5.0  # same discretization as 5-degree increments
+
     def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1):
-        # state = [x,y,q1,q2...,q7]
+        # state = [x,y,z,qx,qy,qz,qw,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
         self.env = env
@@ -78,8 +84,7 @@ class NaivePlanner():
         self.A = ActionSpace(num_DOF=self.num_joints)
         self.G = dict()
 
-        # discretize continuous state space
-        self.dx = self.dy = 0.1
+        # discretize continuous state/action space
         self.da = self.A.da_rad
         self.xi_bounds = (
             (self.xbounds - self.xbounds[0]) / self.dx).astype(int)
@@ -88,9 +93,18 @@ class NaivePlanner():
         # self.max_joint_indexes = (
         #     (self.env.arm.ul - self.env.arm.ll) / self.A.da_rad).astype(int)
 
+    def bottle_pos_from_state(self, state):
+        return state[:3]
+
+    def bottle_ori_from_state(self, state):
+        return state[3:7]
+
+    def joint_pose_from_state(self, state):
+        return state[7:]
+
     def debug_view_state(self, state):
-        joint_pose = state[2:]
-        bx, by = state[:2]
+        joint_pose = self.joint_pose_from_state(state)
+        bx, by, bz = self.bottle_pos_from_state(state)
         self.env.arm.reset(joint_pose)
         link_states = p.getLinkStates(self.env.arm.kukaId, range(7))
         eex, eey = link_states[-1][4][:2]
@@ -110,6 +124,9 @@ class NaivePlanner():
             num_expansions += 1
             n = heapq.heappop(open_set)
             state = n.state
+            cur_joints = self.joint_pose_from_state(state)
+            bottle_pos = self.bottle_pos_from_state(state)
+            bottle_ori = self.bottle_ori_from_state(state)
             # print("Expanded: %.2f" % n.cost, self.heuristic(state))
             # self.debug_view_state(state)
             # print(self.heuristic(state))
@@ -127,14 +144,12 @@ class NaivePlanner():
 
             for ai in self.A.action_ids:
                 dq = self.A.get_action(ai)
-                cur_joints = state[2:]
-
-                # run deterministic simulation for now
-                trans_cost, next_bottle_pos = self.env.run_sim(
+                trans_cost, next_bottle_pos, next_bottle_ori = self.env.run_sim(
                     action=dq, init_joints=cur_joints,
-                    bottle_pos=[state[0], state[1], 0.1])
+                    bottle_pos=bottle_pos, bottle_ori=bottle_ori)
                 next_joint_pose = self.env.arm.joint_pose
-                next_state = np.concatenate([next_bottle_pos, next_joint_pose])
+                next_state = np.concatenate(
+                    [next_bottle_pos, next_bottle_ori, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
 
                 if next_state_key in closed_set:
@@ -184,37 +199,88 @@ class NaivePlanner():
         return ee_link_dist
 
     def heuristic(self, state):
-        x, y = state[0:2]
-        gx, gy = self.goal[0:2]
+        x, y, _ = self.bottle_pos_from_state(state)
+        gx, gy, _ = self.bottle_pos_from_state(self.goal)
         dist_to_goal = (x - gx) ** 2 + (y - gy) ** 2
-        dist_arm_to_bottle = self.dist_arm_to_bottle((x, y), state[2:])
+        joints = self.joint_pose_from_state(state)
+        dist_arm_to_bottle = self.dist_arm_to_bottle((x, y), joints)
         return 5 * dist_to_goal + dist_arm_to_bottle
 
     def reached_goal(self, state):
-        x, y = state[0:2]
-        gx, gy = self.goal[0:2]
+        x, y, _ = self.bottle_pos_from_state(state)
+        gx, gy, _ = self.bottle_pos_from_state(self.goal)
         dist_to_goal = (x - gx) ** 2 + (y - gy) ** 2
         return dist_to_goal < self.sq_dist_thresh
 
     def state_to_key(self, state):
-        x, y = state[0:2]
-        joints = state[2:]
+        pos = np.array(self.bottle_pos_from_state(state))
+        pos_i = (pos / self.dpos).astype(int)
+        ori_i = self.quat_to_key(
+            quat=self.bottle_ori_from_state(state),
+            qbins=self.qbins)
+        joints = self.joint_pose_from_state(state)
         joints_i = ((joints - self.env.arm.ul) / self.da).astype(int)
-        xi = int((x - self.xbounds[0]) / self.dx)
-        yi = int((y - self.ybounds[0]) / self.dy)
-        return (xi, yi, tuple(joints_i))  # tuple of ints as unique id
+        # tuple of ints as unique id
+        return (tuple(pos_i), tuple(ori_i), tuple(joints_i))
 
     def key_to_state(self, key):
-        (xi, yi, joints_i) = key
+        (pos_i, ori_i, joints_i) = key
         joints_i = np.array(joints_i)
-        x = (xi * self.dx) + self.xbounds[0]
-        y = (yi * self.dy) + self.ybounds[0]
+        pos = np.array(pos_i) * self.dpos
+        ori = self.key_to_quat(vec=ori_i, qbins=self.qbins)
         joints = (joints_i * self.da) + self.env.arm.ul
-        return np.array([x, y] + list(joints))
+        return np.concatenate([pos, ori, joints])
         # out_of_bounds = not (self.xi_bounds[0] <= xi <= self.xi_bounds[1] and
         #                      self.yi_bounds[0] <= yi <= self.yi_bounds[1])
         # if out_of_bounds:
         #     return None
+
+    @staticmethod
+    def quat_to_key(quat, qbins):
+        """Use absolute value of w to reduce space by half, only care
+        about final orientation, not the actual rotation from origin. 
+        This is the Basic-Cayley method described here:
+        https://marc-b-reynolds.github.io/quaternions/2017/05/02/QuatQuantPart1.html
+
+        Args:
+            quat ([type]): [description]
+
+        Returns:
+            [type]: [description]
+        """
+        qw = quat[3]
+        s = (1.0 / (1.0 + qw))
+        vec = s * np.array(quat[:3])
+        return (vec * qbins).astype(int)
+
+    @staticmethod
+    def key_to_quat(vec, qbins):
+        vec = np.array(vec) / qbins
+        s = 2.0 / (1.0 + (vec @ vec))
+        return np.concatenate([s * vec, [s - 1.0]])
+
+
+def test_quaternion_discretization():
+    # generate random quaterions: http://planning.cs.uiuc.edu/node198.html
+    avg_error = 0
+    iters = 1000
+    twopi = 2 * math.pi
+    qbins = NaivePlanner.qbins
+    for i in range(iters):
+        # [0, 1) is essentially same as [0, 1] since p(x=1) = 0 for continuous
+        # probability density function
+        quat = np.array(list(Quaternion.random()))
+        quat[3] = abs(quat[3])
+        key = NaivePlanner.quat_to_key(list(quat), qbins)
+        quat1 = np.array(
+            list(Quaternion(NaivePlanner.key_to_quat(key, qbins))))
+        # error = quat * quat1.inverse
+        print(quat, quat1)
+        error = np.linalg.norm(quat - quat1)
+        avg_error += error
+
+    avg_error = avg_error / float(iters)
+    print("Average error: %.3f" % avg_error)
 
 
 def main():
@@ -290,4 +356,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    test_quaternion_discretization()
