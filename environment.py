@@ -114,7 +114,7 @@ class Environment(object):
         return (expected_cost / float(self.num_rand_samples),
                 expected_next_state / float(self.num_rand_samples))
 
-    def run_sim(self, action, init_joints=None, bottle_pos=None):
+    def run_sim(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
         """Deterministic simulation where all parameters are already set and 
         known.
 
@@ -128,9 +128,9 @@ class Environment(object):
         joint_traj = np.linspace(init_joints,
                                  target_joint_pose, num=self.min_iters)
 
-        return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos)
+        return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
-    def simulate_plan(self, joint_traj, bottle_pos):
+    def simulate_plan(self, joint_traj, bottle_pos, bottle_ori):
         """Run simulation with given joint-space trajectory.
 
         Arguments:
@@ -144,10 +144,10 @@ class Environment(object):
 
         # create new bottle object with parameters set beforehand
         if bottle_pos is not None:
-            self.bottle.create_sim_bottle(bottle_pos)
+            self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
             prev_bottle_pos = bottle_pos
         else:
-            self.bottle.create_sim_bottle()
+            self.bottle.create_sim_bottle(ori=bottle_ori)
             prev_bottle_pos = self.bottle.start_pos
         bottle_vert_stopped = False
         bottle_horiz_stopped = False
@@ -205,10 +205,11 @@ class Environment(object):
 
         # generate cost and final position
         is_fallen = self.bottle.check_is_fallen()
+        bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
+            self.bottle.bottle_id)
         cost = self.eval_cost(is_fallen, bottle_pos)
-        final_bottle_pos = np.array(bottle_pos[:2])
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return cost, final_bottle_pos
+        return cost, bottle_pos, bottle_ori

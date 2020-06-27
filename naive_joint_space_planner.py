@@ -93,18 +93,9 @@ class NaivePlanner():
         # self.max_joint_indexes = (
         #     (self.env.arm.ul - self.env.arm.ll) / self.A.da_rad).astype(int)
 
-    def bottle_pos_from_state(self, state):
-        return state[:3]
-
-    def bottle_ori_from_state(self, state):
-        return state[3:7]
-
-    def joint_pose_from_state(self, state):
-        return state[7:]
-
     def debug_view_state(self, state):
         joint_pose = self.joint_pose_from_state(state)
-        bx, by, bz = self.bottle_pos_from_state(state)
+        bx, by, _ = self.bottle_pos_from_state(state)
         self.env.arm.reset(joint_pose)
         link_states = p.getLinkStates(self.env.arm.kukaId, range(7))
         eex, eey = link_states[-1][4][:2]
@@ -227,7 +218,7 @@ class NaivePlanner():
         (pos_i, ori_i, joints_i) = key
         joints_i = np.array(joints_i)
         pos = np.array(pos_i) * self.dpos
-        ori = self.key_to_quat(vec=ori_i, qbins=self.qbins)
+        ori = self.key_to_quat(key=ori_i, qbins=self.qbins)
         joints = (joints_i * self.da) + self.env.arm.ul
         return np.concatenate([pos, ori, joints])
         # out_of_bounds = not (self.xi_bounds[0] <= xi <= self.xi_bounds[1] and
@@ -237,27 +228,23 @@ class NaivePlanner():
 
     @staticmethod
     def quat_to_key(quat, qbins):
-        """Use absolute value of w to reduce space by half, only care
-        about final orientation, not the actual rotation from origin. 
-        This is the Basic-Cayley method described here:
-        https://marc-b-reynolds.github.io/quaternions/2017/05/02/QuatQuantPart1.html
-
-        Args:
-            quat ([type]): [description]
-
-        Returns:
-            [type]: [description]
-        """
-        qw = quat[3]
-        s = (1.0 / (1.0 + qw))
-        vec = s * np.array(quat[:3])
-        return (vec * qbins).astype(int)
+        return (np.array(quat) * qbins).astype(int)
 
     @staticmethod
-    def key_to_quat(vec, qbins):
-        vec = np.array(vec) / qbins
-        s = 2.0 / (1.0 + (vec @ vec))
-        return np.concatenate([s * vec, [s - 1.0]])
+    def key_to_quat(key, qbins):
+        return np.array(key) / qbins
+
+    @staticmethod
+    def bottle_pos_from_state(state):
+        return state[:3]
+
+    @staticmethod
+    def bottle_ori_from_state(state):
+        return state[3:7]
+
+    @staticmethod
+    def joint_pose_from_state(state):
+        return state[7:]
 
 
 def test_quaternion_discretization():
@@ -275,12 +262,20 @@ def test_quaternion_discretization():
         quat1 = np.array(
             list(Quaternion(NaivePlanner.key_to_quat(key, qbins))))
         # error = quat * quat1.inverse
-        print(quat, quat1)
+        # print(quat, quat1)
         error = np.linalg.norm(quat - quat1)
         avg_error += error
 
     avg_error = avg_error / float(iters)
     print("Average error: %.3f" % avg_error)
+
+
+def test_state_indexing():
+    state = list(range(14))
+    assert(NaivePlanner.bottle_pos_from_state(state) == [0, 1, 2])
+    assert(NaivePlanner.bottle_ori_from_state(state) == [3, 4, 5, 6])
+    assert(NaivePlanner.joint_pose_from_state(
+        state) == [7, 8, 9, 10, 11, 12, 13])
 
 
 def main():
@@ -294,15 +289,17 @@ def main():
         p.connect(p.DIRECT)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.setGravity(0, 0, GRAVITY)
-    planeId = p.loadURDF(Environment.plane_urdf_filepath)
+    planeId = p.loadURDF(Environment.plane_urdf_filepath,
+                         basePosition=[0, 0, 0])
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
             p.STATE_LOGGING_VIDEO_MP4, "fully_functional.mp4")
 
     # bottle
-    bottle_start_pos = np.array([0.5, 0.5, 0.1]).astype(float)
-    bottle_goal_pos = np.array([0.2, 0.6, 0.1]).astype(float)
+    bottle_start_pos = np.array(
+        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
@@ -326,9 +323,11 @@ def main():
 
     N = 500
     env = Environment(arm, bottle, is_viz=VISUALIZE, N=N)
-    start = list(bottle_start_pos[0:2]) + list(start_joints)
+    start = np.concatenate(
+        [bottle_start_pos,  bottle_start_ori, start_joints])
     # goal joints are arbitrary and populated later in planner
-    goal = list(bottle_goal_pos[0:2]) + [0]*arm.num_joints
+    goal = np.concatenate(
+        [bottle_goal_pos,  bottle_start_ori, [0]*arm.num_joints])
     xbounds = [0.4, 0.9]
     ybounds = [0.1, 0.9]
     dist_thresh = 1e-1
@@ -347,14 +346,19 @@ def main():
             print("Trying to playback plan without visualizing!")
             exit()
         A = ActionSpace(num_DOF=arm.num_joints)
-        print(policy)
-        next_bottle_pos = bottle_start_pos
+        # print(policy)
+        bottle_pos = bottle_start_pos
+        bottle_ori = bottle_start_ori
         for dq in policy:
             # run deterministic simulation for now
-            trans_cost, next_bottle_pos = env.run_sim(
-                action=dq, bottle_pos=[next_bottle_pos[0], next_bottle_pos[1], 0.1])
+            # init_joints not passed-in because current joint state
+            # maintained by simulator
+            trans_cost, bottle_pos, bottle_ori = env.run_sim(
+                action=dq, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+            print(trans_cost)
 
 
 if __name__ == "__main__":
-    # main()
-    test_quaternion_discretization()
+    main()
+    # test_quaternion_discretization()
+    # test_state_indexing()
