@@ -10,7 +10,7 @@ from sim_objects import Arm, Bottle
 
 
 class ActionSpace():
-    """Action space defined by incremental changes to individual joints. 
+    """Action space defined by incremental changes to individual joints.
     These include positive and negative offsets as well as no change to any joint.
     """
     default_da_rad = 5.0 * math.pi / 180.0  # default 5 degrees offsets
@@ -41,6 +41,8 @@ class Environment(object):
     table_filepath = "table/table.urdf"
     gripper_path = "kuka_iiwa/kuka_with_gripper.sdf"
     INF = 1e10
+    SIM_AVG = 0
+    SIM_MOST_COMMON = 1
 
     def __init__(self, arm, bottle, is_viz=True, N=500):
         # store arm and objects
@@ -63,7 +65,6 @@ class Environment(object):
         # cost parameters
         self.target_bottle_pos = np.zeros((3,))
         self.FALL_COST = Environment.INF
-        self.MOVE_COST = 0  # 1
         self.dist_cost_scale = 100
 
         # Normal distribution of internal bottle params
@@ -77,19 +78,23 @@ class Environment(object):
         self.mean_fillp = (self.min_fill + self.max_fill) / 2.
         self.std_fillp = (self.max_fill - self.mean_fillp) / 3.
 
-    def eval_cost(self, is_fallen, bottle_pos):
+    def eval_cost(self, is_fallen, bottle_pos, ee_move_dist):
         # dist = np.linalg.norm(self.target_bottle_pos[:2] - bottle_pos[:2])
         # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
 
         # any step incurs penalty of 1, but if falls, extra huge penalty
-        return max(self.MOVE_COST, self.FALL_COST*is_fallen)
+        return max(ee_move_dist, self.FALL_COST*is_fallen)
 
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
 
-    def run_sim_stochastic(self, action, init_joints=None):
+    def run_sim_avg(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
         """
-        Randomly sample internal(unobservable to agent) bottle parameters.
+        Randomly sample internal(unobservable to agent) bottle parameters for each iteration, and return cost and next state averaged over all iterations. In cases where bottle falls, next state is not included in average next state.
+
+        NOTE: this is still not stochastic because we overall are using some finalized cost and next state to represent successor of a (state, action) pair. In a true stochastic planner, successors are represented
+        by a belief space, or distribution of possible next states, each with
+        some probability.
         """
         expected_cost = 0
         expected_next_state = np.zeros((2,))
@@ -107,15 +112,63 @@ class Environment(object):
             self.bottle.lat_fric = rand_fric
 
             # run sim deterministically and average cost and new bottle pos
-            cost, ns = self.run_sim(action, init_joints)
+            cost, ns = self.run_sim(
+                action, init_joints, bottle_pos, bottle_ori)
             expected_cost += cost
             expected_next_state += ns
 
         return (expected_cost / float(self.num_rand_samples),
                 expected_next_state / float(self.num_rand_samples))
 
+    def run_sim_mode(self, action, cost_disc, state_disc, init_joints=None, bottle_pos=None, bottle_ori=None):
+        """
+        Similar to run_sim_avg except output cost and next state are chosen as the mode, or most common pair of outcomes. Outputs are discretized into bins.
+        """
+        # map discretized costs/states to their counts
+        cost_bins = dict()
+        max_cost_count, mode_cost = 0, None
+        next_state_bins = dict()
+        max_next_state_count, mode_next_state = 0, None
+        for sim_iter in range(self.num_rand_samples):
+            # randomly sample friction and fill-prop of bottle
+            rand_fill = np.random.normal(
+                loc=self.mean_fillp, scale=self.std_fillp)
+            rand_fill = np.clip(rand_fill, self.min_fill, self.max_fill)
+            rand_fric = np.random.normal(
+                loc=self.mean_friction, scale=self.std_friction)
+            rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
+
+            # set random parameters
+            self.bottle.set_fill_proportion(rand_fill)
+            self.bottle.lat_fric = rand_fric
+
+            # run sim deterministically and average cost and new bottle pos
+            cost, ns = self.run_sim(
+                action, init_joints, bottle_pos, bottle_ori)
+
+            # store results
+            cost_i = cost / cost_disc
+            ns_i = (ns / state_disc).astype(int)
+            if cost_i in cost_bins:
+                cost_bins[cost_i] += 1
+            else:
+                cost_bins[cost_i] = 1
+            if cost_bins[cost_i] > max_cost_count:
+                max_cost_count = cost_bins[cost_i]
+                mode_cost = cost_i
+
+            if ns_i in next_state_bins:
+                next_state_bins[ns_i] += 1
+            else:
+                next_state_bins[ns_i] = 1
+            if next_state_bins[ns_i] > max_next_state_count:
+                max_next_state_count = next_state_bins[ns_i]
+                mode_next_state = ns_i
+
+        return mode_cost * cost_disc, ns_i * state_disc
+
     def run_sim(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
-        """Deterministic simulation where all parameters are already set and 
+        """Deterministic simulation where all parameters are already set and
         known.
 
         Arguments:
@@ -140,7 +193,9 @@ class Environment(object):
             [type] -- [description]
         """
         self.arm.reset(joint_traj[0, :])
-        prev_arm_pos = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)[4]
+        init_arm_pos = np.array(p.getLinkState(
+            self.arm.kukaId, self.arm.EE_idx)[4])
+        prev_arm_pos = np.copy(init_arm_pos)
 
         # create new bottle object with parameters set beforehand
         if bottle_pos is not None:
@@ -183,8 +238,8 @@ class Environment(object):
                 # Uncomment below to visualize lines of target and actual trajectory
                 # also slows down simulation, so only run if trying to visualize
                 # p.addUserDebugLine(prev_target, next_target, [0, 0, 0.3], 1, 1)
-                p.addUserDebugLine(arm_pos, prev_arm_pos, [1, 0, 0], 1,
-                                   self.trail_dur)
+                # p.addUserDebugLine(arm_pos, prev_arm_pos, [1, 0, 0], 1,
+                #                    self.trail_dur)
                 prev_arm_pos = arm_pos
                 # time.sleep(self.SIM_VIZ_FREQ)
 
@@ -207,9 +262,16 @@ class Environment(object):
         is_fallen = self.bottle.check_is_fallen()
         bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
             self.bottle.bottle_id)
-        cost = self.eval_cost(is_fallen, bottle_pos)
+        final_arm_pos = np.array(p.getLinkState(
+            self.arm.kukaId, self.arm.EE_idx)[4])
+        EE_move_dist = np.linalg.norm(final_arm_pos[:2] - init_arm_pos[:2])
+        cost = self.eval_cost(is_fallen, bottle_pos, EE_move_dist)
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
         return cost, bottle_pos, bottle_ori
+
+    @staticmethod
+    def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
+        p.addUserDebugLine(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime)

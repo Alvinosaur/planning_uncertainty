@@ -17,7 +17,11 @@ from environment import Environment, ActionSpace
 """
 Given: some initial joint space configuration as well as start and end positions (x,y) of bottle
 
-State space: joint angles and bottle position (x,y)
+State space: [bx,by,q1,q2,....q7] where (bx,by) is bottle position
+and q1-q7 are the 7 joint angles of arm
+Notice state space composed only of steady-state, and bottle orientation
+is stored as metadata in state->state transitions and not in the state
+
 Action space: change in one joint angle at a time
 
 Algorithm:
@@ -54,22 +58,24 @@ while state != start:
 
 
 class Node(object):
-    def __init__(self, cost, state):
+    def __init__(self, cost, state, bottle_ori=np.array([0, 0, 0, 1])):
         self.cost = cost
         self.state = state
+        self.bottle_ori = bottle_ori
 
     def __lt__(self, other):
         return self.cost < other.cost
 
+    def __repr__(self):
+        s = "C(%.2f): " % self.cost
+        s += ",".join(["%.2f" % v for v in self.state])
+        return s
+
 
 class NaivePlanner():
-    # discretize continuous state space
-    dx = dy = dz = 0.1
-    dpos = np.array([dx, dy, dz])
-    qbins = 180.0 / 5.0  # same discretization as 5-degree increments
 
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1):
-        # state = [x,y,z,qx,qy,qz,qw,q1,q2...,q7]
+    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15*math.pi/180.0):
+        # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
         self.env = env
@@ -77,14 +83,17 @@ class NaivePlanner():
         self.ybounds = np.array(ybounds)  # [miny, maxy]
         self.sq_dist_thresh = dist_thresh ** 2
         self.eps = eps
+        self.dx, self.dy, self.dz = dx, dy, dz
+        # discretize continuous state space
+        self.dpos = np.array([dx, dy, dz])
 
         # define action space
+        self.da = da_rad
         self.num_joints = env.arm.num_joints
-        self.A = ActionSpace(num_DOF=self.num_joints)
+        self.A = ActionSpace(num_DOF=self.num_joints, da_rad=self.da)
         self.G = dict()
 
         # discretize continuous state/action space
-        self.da = self.A.da_rad
         self.xi_bounds = (
             (self.xbounds - self.xbounds[0]) / self.dx).astype(int)
         self.yi_bounds = (
@@ -99,7 +108,7 @@ class NaivePlanner():
         link_states = p.getLinkStates(self.env.arm.kukaId, range(7))
         eex, eey = link_states[-1][4][:2]
         dist = ((bx - eex) ** 2 + (by - eey) ** 2) ** 0.5
-        print(dist, bx, by)
+        print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
 
     def plan(self):
         open_set = [Node(0, self.start)]
@@ -114,15 +123,19 @@ class NaivePlanner():
             num_expansions += 1
             n = heapq.heappop(open_set)
             state = n.state
+            bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
-            bottle_ori = self.bottle_ori_from_state(state)
-            # print("Expanded: %.2f" % n.cost, self.heuristic(state))
-            # self.debug_view_state(state)
-            # print(self.heuristic(state))
+            # print(n)
+            # print("Heuristic: %.2f" % self.heuristic(n.state))
+            self.debug_view_state(state)
+            # print(n)
             state_key = self.state_to_key(state)
             # duplicates are possible since heapq doesn't handle same state but diff costs
+            print(state_key)
+            print(state[:3])
             if state_key in closed_set:
+                print("skipped above")
                 continue
             assert(state_key in self.G)
             cur_cost = self.G[state_key]
@@ -138,8 +151,7 @@ class NaivePlanner():
                     action=dq, init_joints=cur_joints,
                     bottle_pos=bottle_pos, bottle_ori=bottle_ori)
                 next_joint_pose = self.env.arm.joint_pose
-                next_state = np.concatenate(
-                    [next_bottle_pos, next_bottle_ori, next_joint_pose])
+                next_state = np.concatenate([next_bottle_pos, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
 
                 if next_state_key in closed_set:
@@ -151,7 +163,10 @@ class NaivePlanner():
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * f
-                    heapq.heappush(open_set, Node(overall_cost, next_state))
+                    # print("Trans, heuristic change: %.3f, %.3f" % (
+                    #     trans_cost, self.heuristic(state) - self.heuristic(next_state)))
+                    heapq.heappush(open_set, Node(
+                        cost=overall_cost, state=next_state, bottle_ori=next_bottle_ori))
                     # print(overall_cost, f)
                     transitions[next_state_key] = (state_key, ai)
 
@@ -177,17 +192,23 @@ class NaivePlanner():
 
     def dist_arm_to_bottle(self, bottle_pos, joint_pose):
         bottle_pos = bottle_pos + self.env.bottle.center_of_mass
+        bx, by, bz = bottle_pos
         self.env.arm.reset(joint_pose)
         link_positions = self.env.arm.get_link_positions()
-        # min_sq_dist = None
-        # for (lx, ly, lz) in link_positions:
-        #     sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
-        #     if min_sq_dist is None or sq_dist < min_sq_dist:
-        #         min_sq_dist = sq_dist
-        # return math.sqrt(min_sq_dist)
-        EE_pos = np.array(link_positions[-1])
-        ee_link_dist = np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
-        return ee_link_dist
+        # don't consider base link position since doens't move
+        print("(%.2f, %.2f, %.2f), (%.2f, %.2f, %.2f)" % (
+            link_positions[0][0], link_positions[0][1], link_positions[0][2], link_positions[1][0], link_positions[1][1], link_positions[1][2]))
+        link_positions = link_positions[2:]
+        min_sq_dist = None
+        for (lx, ly, lz) in link_positions:
+            sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
+            if min_sq_dist is None or sq_dist < min_sq_dist:
+                min_sq_dist = sq_dist
+        print(math.sqrt(min_sq_dist))
+        return math.sqrt(min_sq_dist)
+        # EE_pos = np.array(link_positions[-1])
+        # ee_link_dist = np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
+        # return ee_link_dist
 
     def heuristic(self, state):
         bottle_pos = np.array(self.bottle_pos_from_state(state))
@@ -195,7 +216,8 @@ class NaivePlanner():
         dist_to_goal = np.linalg.norm(bottle_pos[:2] - goal_bottle_pos[:2])
         joints = self.joint_pose_from_state(state)
         dist_arm_to_bottle = self.dist_arm_to_bottle(bottle_pos, joints)
-        return 5 * dist_to_goal + dist_arm_to_bottle
+        # print("BG: %.2f, EB: %.2f" % (dist_to_goal, dist_arm_to_bottle))
+        return dist_to_goal + dist_arm_to_bottle
 
     def reached_goal(self, state):
         x, y, _ = self.bottle_pos_from_state(state)
@@ -205,74 +227,34 @@ class NaivePlanner():
 
     def state_to_key(self, state):
         pos = np.array(self.bottle_pos_from_state(state))
-        pos_i = (pos / self.dpos).astype(int)
-        ori_i = self.quat_to_key(
-            quat=self.bottle_ori_from_state(state),
-            qbins=self.qbins)
+        pos_i = np.rint(pos / self.dpos)
         joints = self.joint_pose_from_state(state)
-        joints_i = ((joints - self.env.arm.ul) / self.da).astype(int)
+        joints_i = np.rint((joints - self.env.arm.ul) / self.da)
         # tuple of ints as unique id
-        return (tuple(pos_i), tuple(ori_i), tuple(joints_i))
+        return (tuple(pos_i), tuple(joints_i))
 
     def key_to_state(self, key):
-        (pos_i, ori_i, joints_i) = key
+        (pos_i, joints_i) = key
         joints_i = np.array(joints_i)
         pos = np.array(pos_i) * self.dpos
-        ori = self.key_to_quat(key=ori_i, qbins=self.qbins)
         joints = (joints_i * self.da) + self.env.arm.ul
-        return np.concatenate([pos, ori, joints])
+        return np.concatenate([pos, joints])
         # out_of_bounds = not (self.xi_bounds[0] <= xi <= self.xi_bounds[1] and
         #                      self.yi_bounds[0] <= yi <= self.yi_bounds[1])
         # if out_of_bounds:
         #     return None
 
-    @staticmethod
-    def quat_to_key(quat, qbins):
-        return (np.array(quat) * qbins).astype(int)
-
-    @staticmethod
-    def key_to_quat(key, qbins):
-        return np.array(key) / qbins
-
-    @staticmethod
+    @ staticmethod
     def bottle_pos_from_state(state):
         return state[:3]
 
-    @staticmethod
-    def bottle_ori_from_state(state):
-        return state[3:7]
-
-    @staticmethod
+    @ staticmethod
     def joint_pose_from_state(state):
-        return state[7:]
-
-
-def test_quaternion_discretization():
-    # generate random quaterions: http://planning.cs.uiuc.edu/node198.html
-    avg_error = 0
-    iters = 1000
-    twopi = 2 * math.pi
-    qbins = NaivePlanner.qbins
-    for i in range(iters):
-        # [0, 1) is essentially same as [0, 1] since p(x=1) = 0 for continuous
-        # probability density function
-        quat = np.array(list(Quaternion.random()))
-        quat[3] = abs(quat[3])
-        key = NaivePlanner.quat_to_key(list(quat), qbins)
-        quat1 = np.array(
-            list(Quaternion(NaivePlanner.key_to_quat(key, qbins))))
-        # error = quat * quat1.inverse
-        # print(quat, quat1)
-        error = np.linalg.norm(quat - quat1)
-        avg_error += error
-
-    avg_error = avg_error / float(iters)
-    print("Average error: %.3f" % avg_error)
+        return state[3:]
 
 
 def test_state_indexing():
-    state = list(range(14))
+    state = list(range(10))
     assert(NaivePlanner.bottle_pos_from_state(state) == [0, 1, 2])
-    assert(NaivePlanner.bottle_ori_from_state(state) == [3, 4, 5, 6])
     assert(NaivePlanner.joint_pose_from_state(
-        state) == [7, 8, 9, 10, 11, 12, 13])
+        state) == [3, 4, 5, 6, 7, 8, 9])

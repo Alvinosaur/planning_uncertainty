@@ -21,7 +21,7 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
     if visualize:
         # print(policy)
         bottle_pos = planner.bottle_pos_from_state(planner.start)
-        bottle_ori = planner.bottle_ori_from_state(planner.start)
+        bottle_ori = np.array([0, 0, 0, 1])
         for dq in policy:
             # run deterministic simulation for now
             # init_joints not passed-in because current joint state
@@ -44,7 +44,7 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = True
+    REPLAY_RESULTS = False
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
@@ -58,21 +58,22 @@ def main():
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
-            p.STATE_LOGGING_VIDEO_MP4, "fully_functional.mp4")
+            p.STATE_LOGGING_VIDEO_MP4, "cool.mp4")
 
     # bottle
     bottle_start_pos = np.array(
-        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
+        [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
     if VISUALIZE:
-        p.addUserDebugLine(bottle_goal_pos,
-                           bottle_goal_pos +
-                           np.array([0, 0, 0.5]),
-                           [0, 0, 1], 1,
-                           0)
+        # visualize a vertical blue line representing goal pos of bottle
+        vertical_offset = np.array([0, 0, 0.5])  # just to make line vertical
+        Environment.draw_line(lineFrom=bottle_goal_pos,
+                              lineTo=bottle_goal_pos + vertical_offset,
+                              lineColorRGB=[0, 0, 1], lineWidth=1,
+                              lifeTime=0)
 
     # starting end-effector pos, not base pos
     # NOTE: just temporarily setting arm to starting bottle position with some offset
@@ -88,20 +89,32 @@ def main():
     N = 500
     env = Environment(arm, bottle, is_viz=VISUALIZE, N=N)
     start = np.concatenate(
-        [bottle_start_pos,  bottle_start_ori, start_joints])
+        [bottle_start_pos, start_joints])
     # goal joints are arbitrary and populated later in planner
     goal = np.concatenate(
-        [bottle_goal_pos,  bottle_start_ori, [0]*arm.num_joints])
-    xbounds = [0.4, 0.9]
-    ybounds = [0.1, 0.9]
-    dist_thresh = 1e-1
-    eps = 1
+        [bottle_goal_pos, [0]*arm.num_joints])
+    xbounds = [-0.4, -0.9]
+    ybounds = [-0.1, -0.9]
+    dx = dy = dz = 0.1
+    dist_thresh = dx
+    # if  the below isn't true, you're expecting bottle to fall in exactly
+    # the same state bin as the goal
+    assert(dist_thresh <= dx)
+    eps = 2
+    da_rad = 8*math.pi/180.0
 
     # run planner and visualize result
     planner = NaivePlanner(start, goal, env, xbounds,
-                           ybounds, dist_thresh, eps)
+                           ybounds, dist_thresh, eps, da_rad=da_rad,
+                           dx=dx, dy=dy, dz=dz)
     direct_plan_execution(
         planner, env, replay_saved=REPLAY_RESULTS, visualize=VISUALIZE)
+    # s1 = np.array([-0.50, -0.50, 0.04, 0.00, 0.00, -0.00, 1.00,
+    #                0.51, 2.09, -0.11, 0.45, -0.14, 2.08, -0.91])
+    # s2 = np.array([-0.50, -0.50, 0.04, -0.00, 0.00, -0.00, 1.00,
+    #                0.51, 2.09, -0.11, 0.46, -0.14, 2.08, -0.93])
+    # print(planner.state_to_key(s1))
+    # print(planner.state_to_key(s2))
 
 
 if __name__ == "__main__":
