@@ -44,7 +44,7 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = True
+    REPLAY_RESULTS = False
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
@@ -61,14 +61,17 @@ def main():
             p.STATE_LOGGING_VIDEO_MP4, "cool.mp4")
 
     # bottle
-    # bottle_start_pos = np.array(
-    #     [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    # bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
     bottle_start_pos = np.array(
-        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
+        [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
+    # bottle_start_pos = np.array(
+    #     [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    # bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
+
+    # defining euclidean distance dimensionality for heuristic and transition costs
+    use_3D = True  # use 3D euclidean distance
 
     if VISUALIZE:
         # visualize a vertical blue line representing goal pos of bottle
@@ -90,7 +93,7 @@ def main():
     start_joints = arm.joint_pose
 
     N = 500
-    env = Environment(arm, bottle, is_viz=VISUALIZE, N=N)
+    env = Environment(arm, bottle, is_viz=VISUALIZE, N=N, use_3D=use_3D)
     start = np.concatenate(
         [bottle_start_pos, start_joints])
     # goal joints are arbitrary and populated later in planner
@@ -104,12 +107,12 @@ def main():
     # the same state bin as the goal
     assert(dist_thresh <= dx)
     eps = 2
-    da_rad = 8*math.pi/180.0
+    da_rad = 8 * math.pi / 180.0
 
     # run planner and visualize result
     planner = NaivePlanner(start, goal, env, xbounds,
                            ybounds, dist_thresh, eps, da_rad=da_rad,
-                           dx=dx, dy=dy, dz=dz)
+                           dx=dx, dy=dy, dz=dz, use_3D=use_3D)
     direct_plan_execution(
         planner, env, replay_saved=REPLAY_RESULTS, visualize=VISUALIZE)
     # s1 = np.array([-0.50, -0.50, 0.04, 0.00, 0.00, -0.00, 1.00,

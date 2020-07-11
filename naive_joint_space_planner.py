@@ -73,8 +73,23 @@ class Node(object):
 
 
 class NaivePlanner():
+    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True):
+        """[summary]
 
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15*math.pi/180.0):
+        Args:
+            start ([type]): [description]
+            goal ([type]): [description]
+            env ([type]): [description]
+            xbounds ([type]): [description]
+            ybounds ([type]): [description]
+            dist_thresh ([type], optional): [description]. Defaults to 1e-1.
+            eps (int, optional): [description]. Defaults to 1.
+            dx (float, optional): [description]. Defaults to 0.1.
+            dy (float, optional): [description]. Defaults to 0.1.
+            dz (float, optional): [description]. Defaults to 0.1.
+            da_rad ([type], optional): [description]. Defaults to 15*math.pi/180.0.
+            use_3D (bool, optional): whether to use 3D or 2D euclidean distance. Defaults to True.
+        """
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -86,6 +101,7 @@ class NaivePlanner():
         self.dx, self.dy, self.dz = dx, dy, dz
         # discretize continuous state space
         self.dpos = np.array([dx, dy, dz])
+        self.use_3D = use_3D
 
         # define action space
         self.da = da_rad
@@ -142,7 +158,8 @@ class NaivePlanner():
             # print(state_key)
             # print(state[:3])
             if state_key in closed_set:
-                print("avoid re-expanding closed state: %s" % n)
+                # happens when duplicate states are entered with different f-vals are added to open-set
+                # print("avoid re-expanding closed state: %s" % n)
                 continue
             closed_set.add(state_key)
 
@@ -214,32 +231,64 @@ class NaivePlanner():
         policy.reverse()
         return planned_path, policy
 
-    def dist_arm_to_bottle(self, bottle_pos, joint_pose):
+    def dist_arm_to_bottle(self, bottle_pos, joint_pose,
+                           use_EE=False):
+        """Calculates distance from bottle to arm in two forms:
+        1. distance from end-effector(EE) to bottle
+        2. shortest distance from any non-static joint or middle of link to bottle
+
+        Distance can be either 2D or 3D.
+
+        Args:
+            bottle_pos (np.ndarray): 3 x 1 vector of [x,y,z]
+            joint_pose (np.ndarray): (self.num_joints x 1) vec of joint angles
+            use_EE (bool, optional): whether to use EE or shortest joint to bottle distance. Defaults to False.
+
+        Returns:
+            float: distance from arm to bottle
+        """
         bottle_pos = bottle_pos + self.env.bottle.center_of_mass
         bx, by, bz = bottle_pos
+
+        # set arm to specified joint pose to calculate joint distances
         self.env.arm.reset(joint_pose)
         link_positions = self.env.arm.get_link_positions()
-        # don't consider base link position since doens't move
+
+        if use_EE:
+            EE_pos = np.array(link_positions[-1])
+            if self.use_3D:
+                return np.linalg.norm(bottle_pos[:3] - EE_pos[:3])
+            else:
+                return np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
+        else:
+            midpoints = []
+            # only calculate midpoint btwn last static and 1st dynamic
+            for i in range(1, len(link_positions)-1):
+                midpoint = np.mean(np.array([
+                    link_positions[i],
+                    link_positions[i+1]]), axis=0)
+                midpoints.append(midpoint)
+            # ignore first two links, which are static
+            positions = link_positions[2:] + midpoints
+            min_sq_dist = None
+            for (lx, ly, lz) in positions:
+                sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
+                if min_sq_dist is None or sq_dist < min_sq_dist:
+                    min_sq_dist = sq_dist
+            return math.sqrt(min_sq_dist)
+
+        # print(math.sqrt(min_sq_dist))
         # print("(%.2f, %.2f, %.2f), (%.2f, %.2f, %.2f)" % (
         #     link_positions[0][0], link_positions[0][1], link_positions[0][2], link_positions[1][0], link_positions[1][1], link_positions[1][2]))
-        # link_positions = link_positions[2:]
-        # min_sq_dist = None
-        # for (lx, ly, lz) in link_positions:
-        #     sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
-        #     if min_sq_dist is None or sq_dist < min_sq_dist:
-        #         min_sq_dist = sq_dist
-        # # print(math.sqrt(min_sq_dist))
-        # return math.sqrt(min_sq_dist)
-        EE_pos = np.array(link_positions[-1])
-        ee_link_dist = np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
-        return ee_link_dist
 
     def heuristic(self, state):
         bottle_pos = np.array(self.bottle_pos_from_state(state))
         goal_bottle_pos = np.array(self.bottle_pos_from_state(self.goal))
-        dist_to_goal = np.linalg.norm(bottle_pos[:2] - goal_bottle_pos[:2])
+        # exception is to not use 3D for bottle position since only on flat environment
+        dist_to_goal = np.linalg.norm(bottle_pos[: 2] - goal_bottle_pos[: 2])
         joints = self.joint_pose_from_state(state)
-        dist_arm_to_bottle = self.dist_arm_to_bottle(bottle_pos, joints)
+        dist_arm_to_bottle = self.dist_arm_to_bottle(
+            bottle_pos, joints, use_EE=False)
         # print("BG: %.2f, EB: %.2f" % (dist_to_goal, dist_arm_to_bottle))
         return dist_to_goal + dist_arm_to_bottle
 
@@ -268,7 +317,7 @@ class NaivePlanner():
         # if out_of_bounds:
         #     return None
 
-    @staticmethod
+    @ staticmethod
     def is_invalid_transition(trans_cost):
         return trans_cost == Environment.INF
 

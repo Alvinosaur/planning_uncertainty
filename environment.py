@@ -45,7 +45,7 @@ class Environment(object):
     SIM_AVG = 0
     SIM_MOST_COMMON = 1
 
-    def __init__(self, arm, bottle, is_viz=True, N=500):
+    def __init__(self, arm, bottle, is_viz=True, N=500, use_3D=True):
         # store arm and objects
         self.arm = arm
         self.bottle = bottle
@@ -67,6 +67,7 @@ class Environment(object):
         self.target_bottle_pos = np.zeros((3,))
         self.FALL_COST = Environment.INF
         self.dist_cost_scale = 100
+        self.use_3D = use_3D
 
         # Normal distribution of internal bottle params
         self.min_fric = 0.1
@@ -273,7 +274,12 @@ class Environment(object):
             self.bottle.bottle_id)
         final_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
-        EE_move_dist = np.linalg.norm(final_arm_pos[:3] - init_arm_pos[:3])
+
+        # euclidean distance moved by arm is transition cost
+        if self.use_3D:
+            EE_move_dist = np.linalg.norm(final_arm_pos[:3] - init_arm_pos[:3])
+        else:
+            EE_move_dist = np.linalg.norm(final_arm_pos[:2] - init_arm_pos[:2])
         cost = self.eval_cost(is_fallen, bottle_pos, EE_move_dist)
 
         # remove bottle object, can't just reset pos since need to change params each iter
