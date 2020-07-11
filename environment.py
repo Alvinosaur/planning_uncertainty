@@ -5,6 +5,7 @@ import math
 from datetime import datetime
 import numpy as np
 import time
+from scipy.spatial.transform import Rotation as R
 
 from sim_objects import Arm, Bottle
 
@@ -96,8 +97,10 @@ class Environment(object):
         by a belief space, or distribution of possible next states, each with
         some probability.
         """
-        expected_cost = 0
-        expected_next_state = np.zeros((2,))
+        avg_cost = 0
+        avg_next_bpos = np.zeros(2)
+        # next_bottle_oris = np.zeros(shape=(4, self.num_rand_samples))  # 4 x N
+        avg_joint_pos = np.zeros(self.arm.num_DOF)
         for sim_iter in range(self.num_rand_samples):
             # randomly sample friction and fill-prop of bottle
             rand_fill = np.random.normal(
@@ -112,13 +115,18 @@ class Environment(object):
             self.bottle.lat_fric = rand_fric
 
             # run sim deterministically and average cost and new bottle pos
-            cost, ns = self.run_sim(
+            cost, bpos, bori, arm_pos = self.run_sim(
                 action, init_joints, bottle_pos, bottle_ori)
-            expected_cost += cost
-            expected_next_state += ns
+            avg_cost += cost
+            avg_next_bpos += bpos
+            # next_bottle_oris[:, sim_iter] = bori
+            avg_joint_pos += arm_pos
 
-        return (expected_cost / float(self.num_rand_samples),
-                expected_next_state / float(self.num_rand_samples))
+            # avg_bori = self.avg_quaternion(next_bottle_oris)
+        return (avg_cost / float(self.num_rand_samples),
+                avg_next_bpos / float(self.num_rand_samples),
+                bori,  # just return last bottle orientation for now
+                avg_joint_pos / float(self.num_rand_samples))
 
     def run_sim_mode(self, action, cost_disc, state_disc, init_joints=None, bottle_pos=None, bottle_ori=None):
         """
@@ -184,7 +192,8 @@ class Environment(object):
         return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
     def simulate_plan(self, joint_traj, bottle_pos, bottle_ori):
-        """Run simulation with given joint-space trajectory.
+        """Run simulation with given joint-space trajectory. Does not reset arm
+        joint angles after simulation is done, so that value can be guaranteed to be untouched.
 
         Arguments:
             joint_traj {[type]} -- N x num_DOF trajectory of joints
@@ -264,14 +273,45 @@ class Environment(object):
             self.bottle.bottle_id)
         final_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
-        EE_move_dist = np.linalg.norm(final_arm_pos[:2] - init_arm_pos[:2])
+        EE_move_dist = np.linalg.norm(final_arm_pos[:3] - init_arm_pos[:3])
         cost = self.eval_cost(is_fallen, bottle_pos, EE_move_dist)
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return cost, bottle_pos, bottle_ori
+        return cost, bottle_pos, bottle_ori, self.arm.joint_pose
 
     @staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
         p.addUserDebugLine(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime)
+
+    @staticmethod
+    def avg_quaternion(quaternions):
+        """Finds average of quaternions from this post. Doesn't seem to work
+        too well though.
+        https://www.mathworks.com/matlabcentral/fileexchange/40098-tolgabirdal-averaging_quaternions
+        """
+        A = np.zeros((4, 4))
+        assert (quaternions.shape[0] == 4)  # 4 x N
+        num_quats = quaternions.shape[1]
+        for i in range(num_quats):
+            q = quaternions[:, i].reshape((4, 1))
+            A += (q @ q.T)
+        A /= float(num_quats)
+
+        # can't do eigenvalue decomposition since not square matrix
+        U, s, VT = np.linalg.svd(A)
+        # eigenvector corresponding to largest eigenvalue is avg quat
+        # last eigenvector corresponds to largest eigenvalue
+        avg_quat = VT[0, :]
+        return avg_quat  # / np.linalg.norm(avg_quat)
+
+
+def test_environment_avg_quat():
+    r = R.from_euler('zyx', [
+        [90, 0, 70],
+        [45, 20, 0]], degrees=True)
+    quaternions = r.as_quat().T
+    avg_quat = Environment.avg_quaternion(quaternions)
+    avg_angles = R.from_quat(avg_quat).as_euler('zyx', degrees=True)
+    print(avg_angles)

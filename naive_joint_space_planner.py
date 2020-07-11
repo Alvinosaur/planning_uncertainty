@@ -111,63 +111,87 @@ class NaivePlanner():
         print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
 
     def plan(self):
+        # initialize open set with start and G values
         open_set = [Node(0, self.start)]
         closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
         transitions = dict()
+
+        # metrics on performance of planner
         num_expansions = 0
 
+        # find solution
         goal_expanded = False
         while not goal_expanded and len(open_set) > 0:
             num_expansions += 1
+
+            # get next state to expand
             n = heapq.heappop(open_set)
             state = n.state
+            state_key = self.state_to_key(state)
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
             # print(n)
             # print("Heuristic: %.2f" % self.heuristic(n.state))
-            self.debug_view_state(state)
+            # self.debug_view_state(state)
             # print(n)
-            state_key = self.state_to_key(state)
+
             # duplicates are possible since heapq doesn't handle same state but diff costs
-            print(state_key)
-            print(state[:3])
+            # print(state_key)
+            # print(state[:3])
             if state_key in closed_set:
-                print("skipped above")
+                print("avoid re-expanding closed state: %s" % n)
                 continue
-            assert(state_key in self.G)
-            cur_cost = self.G[state_key]
             closed_set.add(state_key)
 
+            # check if found goal, if so loop will terminate in next iteration
             if self.reached_goal(state):
                 goal_expanded = True
                 self.goal = state
 
+            # extra current total move-cost of current state
+            assert(state_key in self.G)
+            cur_cost = self.G[state_key]
+
+            # explore all actions from this state
             for ai in self.A.action_ids:
+                # action defined as an offset of joint angles of arm
                 dq = self.A.get_action(ai)
-                trans_cost, next_bottle_pos, next_bottle_ori = self.env.run_sim(
+
+                # (state, action) -> (cost, next_state)
+                (trans_cost, next_bottle_pos,
+                 next_bottle_ori, next_joint_pose) = self.env.run_sim(
                     action=dq, init_joints=cur_joints,
                     bottle_pos=bottle_pos, bottle_ori=bottle_ori)
-                next_joint_pose = self.env.arm.joint_pose
+
+                # completely ignore actions that knock over bottle
+                if self.is_invalid_transition(trans_cost):
+                    continue
+
+                # build next state and check if already expanded
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
-
-                if next_state_key in closed_set:
+                if next_state_key in closed_set:  # if already expanded, skip
                     continue
 
                 f = self.heuristic(next_state)
                 new_G = cur_cost + trans_cost
+                # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * f
                     # print("Trans, heuristic change: %.3f, %.3f" % (
                     #     trans_cost, self.heuristic(state) - self.heuristic(next_state)))
+
+                    # add to open set
                     heapq.heappush(open_set, Node(
                         cost=overall_cost, state=next_state, bottle_ori=next_bottle_ori))
                     # print(overall_cost, f)
+
+                    # build directed graph
                     transitions[next_state_key] = (state_key, ai)
 
         print("States Expanded: %d" % num_expansions)
@@ -196,19 +220,19 @@ class NaivePlanner():
         self.env.arm.reset(joint_pose)
         link_positions = self.env.arm.get_link_positions()
         # don't consider base link position since doens't move
-        print("(%.2f, %.2f, %.2f), (%.2f, %.2f, %.2f)" % (
-            link_positions[0][0], link_positions[0][1], link_positions[0][2], link_positions[1][0], link_positions[1][1], link_positions[1][2]))
-        link_positions = link_positions[2:]
-        min_sq_dist = None
-        for (lx, ly, lz) in link_positions:
-            sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
-            if min_sq_dist is None or sq_dist < min_sq_dist:
-                min_sq_dist = sq_dist
-        print(math.sqrt(min_sq_dist))
-        return math.sqrt(min_sq_dist)
-        # EE_pos = np.array(link_positions[-1])
-        # ee_link_dist = np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
-        # return ee_link_dist
+        # print("(%.2f, %.2f, %.2f), (%.2f, %.2f, %.2f)" % (
+        #     link_positions[0][0], link_positions[0][1], link_positions[0][2], link_positions[1][0], link_positions[1][1], link_positions[1][2]))
+        # link_positions = link_positions[2:]
+        # min_sq_dist = None
+        # for (lx, ly, lz) in link_positions:
+        #     sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
+        #     if min_sq_dist is None or sq_dist < min_sq_dist:
+        #         min_sq_dist = sq_dist
+        # # print(math.sqrt(min_sq_dist))
+        # return math.sqrt(min_sq_dist)
+        EE_pos = np.array(link_positions[-1])
+        ee_link_dist = np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
+        return ee_link_dist
 
     def heuristic(self, state):
         bottle_pos = np.array(self.bottle_pos_from_state(state))
@@ -243,6 +267,10 @@ class NaivePlanner():
         #                      self.yi_bounds[0] <= yi <= self.yi_bounds[1])
         # if out_of_bounds:
         #     return None
+
+    @staticmethod
+    def is_invalid_transition(trans_cost):
+        return trans_cost == Environment.INF
 
     @ staticmethod
     def bottle_pos_from_state(state):

@@ -28,7 +28,7 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
             # maintained by simulator
             # print(bottle_pos)
             # print(bottle_ori)
-            trans_cost, bottle_pos, bottle_ori = env.run_sim(
+            trans_cost, bottle_pos, bottle_ori, _ = env.run_sim(
                 action=dq, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
     elif not visualize and replay_saved:
@@ -44,7 +44,7 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = False
+    REPLAY_RESULTS = True
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
@@ -61,9 +61,12 @@ def main():
             p.STATE_LOGGING_VIDEO_MP4, "cool.mp4")
 
     # bottle
+    # bottle_start_pos = np.array(
+    #     [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    # bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
     bottle_start_pos = np.array(
-        [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
+        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
