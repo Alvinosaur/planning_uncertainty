@@ -12,20 +12,26 @@ from sim_objects import Arm, Bottle
 
 class ActionSpace():
     """Action space defined by incremental changes to individual joints.
-    These include positive and negative offsets as well as no change to any joint.
+    These include positive and negative offsets and no-change if specified
     """
     default_da_rad = 5.0 * math.pi / 180.0  # default 5 degrees offsets
 
-    def __init__(self, num_DOF, da_rad=default_da_rad):
+    def __init__(self, num_DOF, da_rad=default_da_rad, include_no_change=False):
         self.num_DOF = num_DOF
         self.da_rad = da_rad
 
         pos_moves = np.eye(N=num_DOF) * da_rad
         neg_moves = np.eye(N=num_DOF) * -da_rad
         no_change = np.zeros((1, num_DOF))
-        self.actions_mat = np.vstack([
-            no_change, pos_moves, neg_moves
-        ])
+
+        if include_no_change:
+            self.actions_mat = np.vstack([
+                no_change, pos_moves, neg_moves
+            ])
+        else:
+            self.actions_mat = np.vstack([
+                pos_moves, neg_moves
+            ])
         self.num_actions = self.actions_mat.shape[0]
         self.action_ids = list(range(self.num_actions))
 
@@ -45,7 +51,7 @@ class Environment(object):
     SIM_AVG = 0
     SIM_MOST_COMMON = 1
 
-    def __init__(self, arm, bottle, is_viz=True, N=500, use_3D=True):
+    def __init__(self, arm, bottle, is_viz=True, use_3D=True, min_iters=10, max_iters=150):
         # store arm and objects
         self.arm = arm
         self.bottle = bottle
@@ -53,13 +59,13 @@ class Environment(object):
         # simulation visualization params
         self.is_viz = is_viz
         self.trail_dur = 1  # length of visulizing arm trajectory
-        self.SIM_VIZ_FREQ = 1/240.
+        self.SIM_VIZ_FREQ = 240.0  # Hz
 
         # simulation run params
         # if no object moves more than this thresh, terminate sim early
         self.no_movement_thresh = 0.001
-        self.min_iters = 10  # enough iters to let action execute fully
-        self.max_iters = 150  # max number of iters in case objects oscillating
+        self.min_iters = min_iters  # enough iters to let action execute fully
+        self.max_iters = max_iters  # max number of iters in case objects oscillating
         # number of random samples of internal params for stochastic simulation
         self.num_rand_samples = 10
 
@@ -85,7 +91,7 @@ class Environment(object):
         # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
 
         # any step incurs penalty of 1, but if falls, extra huge penalty
-        return max(ee_move_dist, self.FALL_COST*is_fallen)
+        return max(ee_move_dist, self.FALL_COST * is_fallen)
 
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos

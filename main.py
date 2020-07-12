@@ -4,7 +4,7 @@ import math
 import numpy as np
 
 from sim_objects import Bottle, Arm
-from environment import Environment, ActionSpace
+from environment import Environment
 from naive_joint_space_planner import NaivePlanner
 
 
@@ -61,12 +61,12 @@ def main():
             p.STATE_LOGGING_VIDEO_MP4, "cool.mp4")
 
     # bottle
-    bottle_start_pos = np.array(
-        [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
     # bottle_start_pos = np.array(
-    #     [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    # bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
+    #     [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    # bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
+    bottle_start_pos = np.array(
+        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
@@ -82,9 +82,6 @@ def main():
                               lifeTime=0)
 
     # starting end-effector pos, not base pos
-    # NOTE: just temporarily setting arm to starting bottle position with some offset
-    # offset = -np.array([0.05, 0, 0])
-    # EE_start_pos = bottle_start_pos + offset
     EE_start_pos = np.array([0.5, 0.3, 0.2])
     base_start_ori = np.array([0, 0, 0, 1]).astype(float)
     arm = Arm(EE_start_pos=EE_start_pos,
@@ -92,8 +89,7 @@ def main():
               kukaId=kukaId)
     start_joints = arm.joint_pose
 
-    N = 500
-    env = Environment(arm, bottle, is_viz=VISUALIZE, N=N, use_3D=use_3D)
+    env = Environment(arm, bottle, is_viz=VISUALIZE, use_3D=use_3D)
     start = np.concatenate(
         [bottle_start_pos, start_joints])
     # goal joints are arbitrary and populated later in planner
@@ -106,8 +102,8 @@ def main():
     # if  the below isn't true, you're expecting bottle to fall in exactly
     # the same state bin as the goal
     assert(dist_thresh <= dx)
-    eps = 2
-    da_rad = 8 * math.pi / 180.0
+    eps = 20
+    da_rad = 12 * math.pi / 180.0
 
     # run planner and visualize result
     planner = NaivePlanner(start, goal, env, xbounds,

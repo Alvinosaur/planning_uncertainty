@@ -4,12 +4,15 @@ import pybullet as p
 from scipy.spatial.transform import Rotation as R
 
 PI = math.pi
-TWO_PI = 2*math.pi
+TWO_PI = 2 * math.pi
 
 # water bottle
 
 
 class Bottle:
+    DEFAULT_MAX_VOLUME = 16.9  # fl-oz
+    DEFAULT_RADIUS = 0.03175  # m
+    DEFAULT_HEIGHT = 0.1905  # m
     WATER_DENSITY = 997    # kg/m³
     VOL_TO_MASS = 0.0296   # fl-oz to kg
     PLASTIC_MASS = 0.0127  # kg
@@ -22,10 +25,9 @@ class Bottle:
         self.start_ori = start_ori
         self.col_id = None
 
-        self.max_volume = 16.9      # fl-oz
-        self.radius = 0.03175    # m
-        self.height = 0.1905     # m
-        self.mass = 0.5        # kg
+        self.max_volume = self.DEFAULT_MAX_VOLUME      # fl-oz
+        self.radius = self.DEFAULT_RADIUS    # m
+        self.height = self.DEFAULT_HEIGHT     # m
         self.default_fric = 0.1  # plastic-wood dynamic friction
         self.lat_fric = self.default_fric
         self.min_fill = 0.3
@@ -35,7 +37,7 @@ class Bottle:
         self.bottle_mass = None
         self.inertial_shift = None
         self.center_of_mass = None
-        self.default_com = np.array([0, 0, self.height/2])
+        self.default_com = np.array([0, 0, self.height / 2])
         self.set_fill_proportion(fill_prop)
 
         self.col_id = p.createCollisionShape(
@@ -123,13 +125,10 @@ class Arm:
         self.jr = np.array([5.8, 4, 5.8, 4, 5.8, 4, 6])
         # restposes for null space
         # self.rp = [0, 0, 0, 0.5 * math.pi, 0, -math.pi * 0.5 * 0.66, 0]
-        self.rp = np.array([math.pi/4, (90 + 15)*math.pi/180, 0, 0, 0, 0, 0])
+        self.rp = np.array(
+            [math.pi / 4, (90 + 15) * math.pi / 180, 0, 0, 0, 0, 0])
         # joint damping coefficents
         self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-
-        self.force = 500  # allow instantenous velocity = target velocity
-        self.max_vel = 2*math.pi/16  # angular velocity
-        self.rot_vel = self.max_vel
 
         # may possibly change the below params to be part of action space
         self.max_straight_pos = np.array([0.78751945, 0.57154083, 0.49517447])
@@ -139,11 +138,10 @@ class Arm:
         self.rprime = np.linalg.norm(self.max_straight_pos[:2]) - self.LE
         self.target_velocity = 0
         self.force = 500
-        self.position_gain = 0.1
-        self.velocity_gain = 0.5
+        self.position_gain = 0.2
 
         self.EE_idx = 6
-        self.num_joints = p.getNumJoints(self.kukaId)
+        self.num_joints = self.num_DOF = p.getNumJoints(self.kukaId)
         self.ikSolver = 0  # id of solver algorithm provided by pybullet
 
         self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
@@ -219,7 +217,7 @@ class Arm:
             jointRanges=self.jr.tolist(),
             restPoses=self.rp.tolist())
         # joint_poses = np.clip(joint_poses, self.ll, self.ul)
-        orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
+        orn = p.getQuaternionFromEuler([-math.pi / 2, 0, angle - math.pi / 2])
         # joint_poses = list(p.calculateInverseKinematics(
         #     self.kukaId,
         #     self.EE_idx,
