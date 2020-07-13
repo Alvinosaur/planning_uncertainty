@@ -190,11 +190,15 @@ class Environment(object):
             action {np.ndarray} -- offset in joint space, generated in ActionSpace
         """
         if init_joints is None:  # use arm's current joint state
-            init_joints = self.arm.joint_pose
+            init_joints = np.array(self.arm.joint_pose)
+        else:
+            init_joints = np.array(init_joints)
 
         target_joint_pose = init_joints + action
-        joint_traj = np.linspace(init_joints,
-                                 target_joint_pose, num=self.min_iters)
+
+        # don't create linear interp, just let internal pybullet PID get to target
+        joint_traj = np.array([init_joints,
+                               target_joint_pose])
 
         return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
@@ -230,19 +234,17 @@ class Environment(object):
         EE_error = 0
 
         iter = 0
+        traj_len = joint_traj.shape[0]
         while iter < self.min_iters or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
-            if iter < self.min_iters:
-                next_joint_pose = joint_traj[iter, :]
-                for ji, jval in enumerate(next_joint_pose):
-                    p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
-                                            jointIndex=ji,
-                                            controlMode=p.POSITION_CONTROL,
-                                            targetPosition=jval,
-                                            targetVelocity=0,
-                                            force=self.arm.force,
-                                            positionGain=self.arm.position_gain,
-                                            velocityGain=self.arm.velocity_gain)
+            next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
+            for ji, jval in enumerate(next_joint_pose):
+                p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
+                                        jointIndex=ji,
+                                        controlMode=p.POSITION_CONTROL,
+                                        targetPosition=jval,
+                                        force=self.arm.force,
+                                        positionGain=self.arm.position_gain)
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()

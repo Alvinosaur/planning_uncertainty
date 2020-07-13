@@ -263,9 +263,9 @@ def main():
               kukaId=kukaId)
     start_joints = arm.joint_pose
 
-    da = 8 * math.pi / 180.0
+    da = 15 * math.pi / 180.0
     env = TestEnvironment(arm, bottle, da, is_viz=VISUALIZE)
-    env.compare_min_iters(1)
+    env.compare_min_iters(2)
 
 
 if __name__ == "__main__":

@@ -114,6 +114,9 @@ class NaivePlanner():
             (self.xbounds - self.xbounds[0]) / self.dx).astype(int)
         self.yi_bounds = (
             (self.ybounds - self.ybounds[0]) / self.dy).astype(int)
+        self.TWO_PI_i = 2 * math.pi / self.da
+        # let Arm() handle the actual manipulator limits, here just treat [0, 2pi] as bounds for discretization
+        # self.joint_bounds = (self.env.arm.ul / self.da).astype(int)
         # self.max_joint_indexes = (
         #     (self.env.arm.ul - self.env.arm.ll) / self.A.da_rad).astype(int)
 
@@ -149,10 +152,10 @@ class NaivePlanner():
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
+            # print("Expanded:")
             # print(n)
             # print("Heuristic: %.2f" % self.heuristic(n.state))
             # self.debug_view_state(state)
-            # print(n)
 
             # duplicates are possible since heapq doesn't handle same state but diff costs
             # print(state_key)
@@ -200,8 +203,10 @@ class NaivePlanner():
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * f
-                    # print("Trans, heuristic change: %.3f, %.3f" % (
-                    #     trans_cost, self.heuristic(state) - self.heuristic(next_state)))
+                    print("Trans, heuristic change: %.3f, %.3f" % (
+                        trans_cost, self.eps * (self.heuristic(state) - self.heuristic(next_state))))
+                    print("Overall new cost: %.2f" % overall_cost)
+                    print(next_state_key)
 
                     # add to open set
                     heapq.heappush(open_set, Node(
@@ -252,10 +257,10 @@ class NaivePlanner():
 
         # set arm to specified joint pose to calculate joint distances
         self.env.arm.reset(joint_pose)
-        link_positions = self.env.arm.get_link_positions()
+        joint_positions = self.env.arm.get_joint_positions()
 
         if use_EE:
-            EE_pos = np.array(link_positions[-1])
+            EE_pos = np.array(joint_positions[-1])
             if self.use_3D:
                 return np.linalg.norm(bottle_pos[:3] - EE_pos[:3])
             else:
@@ -263,23 +268,49 @@ class NaivePlanner():
         else:
             midpoints = []
             # only calculate midpoint btwn last static and 1st dynamic
-            for i in range(1, len(link_positions)-1):
+            for i in range(2, len(joint_positions) - 1):
                 midpoint = np.mean(np.array([
-                    link_positions[i],
-                    link_positions[i+1]]), axis=0)
+                    joint_positions[i],
+                    joint_positions[i + 1]]), axis=0)
                 midpoints.append(midpoint)
             # ignore first two links, which are static
-            positions = link_positions[2:] + midpoints
+            positions = joint_positions[2:] + midpoints
             min_sq_dist = None
-            for (lx, ly, lz) in positions:
-                sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
+            min_i = 0
+            for i, pos in enumerate(positions):
+                # color = [1, 0, 0] if i < len(joint_positions[2:]) else [0, 1, 0]
+                # debug_pos = np.array([lx, ly, lz])
+                # Environment.draw_line(
+                #     lineFrom=debug_pos,
+                #     lineTo=debug_pos + np.array([0, 0, 1]),
+                #     lineColorRGB=color,
+                #     lineWidth=10, lifeTime=self.env.max_iters/float(self.env.SIM_VIZ_FREQ))
+                if self.use_3D:
+                    sq_dist = np.linalg.norm(np.array(pos) - bottle_pos[:3])
+                else:
+                    sq_dist = np.linalg.norm(
+                        np.array(pos[:2]) - bottle_pos[:2])
                 if min_sq_dist is None or sq_dist < min_sq_dist:
                     min_sq_dist = sq_dist
+                    min_i = i
+
+            # debug
+            # if min_i >= len(joint_positions[:2]):
+            #     print("closest is midpoint %d, %.2f" %
+            #           (min_i - len(joint_positions[:2]), min_sq_dist))
+            # else:
+            #     print("closest is link %d, %.2f" % (min_i, min_sq_dist))
+            # debug_pos = np.array(positions[min_i])
+            # Environment.draw_line(
+            #     lineFrom=debug_pos,
+            #     lineTo=debug_pos + np.array([0, 0, 1]),
+            #     lineColorRGB=[1, 0, 0],
+            #     lineWidth=10, lifeTime=self.env.max_iters/float(self.env.SIM_VIZ_FREQ))
             return math.sqrt(min_sq_dist)
 
         # print(math.sqrt(min_sq_dist))
         # print("(%.2f, %.2f, %.2f), (%.2f, %.2f, %.2f)" % (
-        #     link_positions[0][0], link_positions[0][1], link_positions[0][2], link_positions[1][0], link_positions[1][1], link_positions[1][2]))
+        #     joint_positions[0][0], joint_positions[0][1], joint_positions[0][2], joint_positions[1][0], joint_positions[1][1], joint_positions[1][2]))
 
     def heuristic(self, state):
         bottle_pos = np.array(self.bottle_pos_from_state(state))
@@ -302,7 +333,7 @@ class NaivePlanner():
         pos = np.array(self.bottle_pos_from_state(state))
         pos_i = np.rint(pos / self.dpos)
         joints = self.joint_pose_from_state(state)
-        joints_i = np.rint((joints - self.env.arm.ul) / self.da)
+        joints_i = np.rint(joints / self.da) % self.TWO_PI_i
         # tuple of ints as unique id
         return (tuple(pos_i), tuple(joints_i))
 

@@ -58,7 +58,7 @@ def main():
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
-            p.STATE_LOGGING_VIDEO_MP4, "cool.mp4")
+            p.STATE_LOGGING_VIDEO_MP4, "limitation_of_ignoring_dynamics_constraints.mp4")
 
     # bottle
     # bottle_start_pos = np.array(
@@ -84,17 +84,20 @@ def main():
     # starting end-effector pos, not base pos
     EE_start_pos = np.array([0.5, 0.3, 0.2])
     base_start_ori = np.array([0, 0, 0, 1]).astype(float)
+    max_force = 100  # N
     arm = Arm(EE_start_pos=EE_start_pos,
               start_ori=base_start_ori,
-              kukaId=kukaId)
+              kukaId=kukaId,
+              max_force=max_force)
     start_joints = arm.joint_pose
 
-    env = Environment(arm, bottle, is_viz=VISUALIZE, use_3D=use_3D)
+    env = Environment(arm, bottle, is_viz=VISUALIZE,
+                      use_3D=use_3D, min_iters=30)
     start = np.concatenate(
         [bottle_start_pos, start_joints])
     # goal joints are arbitrary and populated later in planner
     goal = np.concatenate(
-        [bottle_goal_pos, [0]*arm.num_joints])
+        [bottle_goal_pos, [0] * arm.num_joints])
     xbounds = [-0.4, -0.9]
     ybounds = [-0.1, -0.9]
     dx = dy = dz = 0.1
@@ -103,7 +106,7 @@ def main():
     # the same state bin as the goal
     assert(dist_thresh <= dx)
     eps = 20
-    da_rad = 12 * math.pi / 180.0
+    da_rad = 15 * math.pi / 180.0
 
     # run planner and visualize result
     planner = NaivePlanner(start, goal, env, xbounds,
