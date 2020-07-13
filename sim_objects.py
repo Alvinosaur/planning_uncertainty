@@ -105,13 +105,14 @@ class Bottle:
 
 
 class Arm:
-    def __init__(self, EE_start_pos, start_ori, kukaId):
+    def __init__(self, EE_start_pos, start_ori, kukaId, max_force=250):
         self.EE_start_pos = EE_start_pos
         self.start_ori = start_ori
         self.kukaId = kukaId
         self.base_pos = np.array([0, 0, 0.1])
         self.min_dist = 0.3
         self.MAX_REACH = None  # need to set with set_general_max_reach()
+        self.max_EE_vel = 5  # m/s
 
         # NOTE: taken from example:
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
@@ -137,8 +138,8 @@ class Arm:
         self.LE = 0.081  # dist btwn EE frame and frame before EE
         self.rprime = np.linalg.norm(self.max_straight_pos[:2]) - self.LE
         self.target_velocity = 0
-        self.force = 500
-        self.position_gain = 0.2
+        self.force = max_force
+        self.position_gain = 0.1
 
         self.EE_idx = 6
         self.num_joints = self.num_DOF = p.getNumJoints(self.kukaId)
@@ -151,9 +152,46 @@ class Arm:
         joint_states = p.getJointStates(self.kukaId, range(self.num_joints))
         self.joint_pose = np.array([state[0] for state in joint_states])
 
-    def get_link_positions(self):
-        link_states = p.getLinkStates(self.kukaId, range(self.num_joints))
-        return [state[4] for state in link_states]
+    def calc_max_joint_vel(self, ji, dt, joint_pose=None):
+        """Numerically approximates translational velocity and rotational
+        velocity. The serious limitation from this is that it assumes
+        simulator can reach +eps and -eps poses in dt time, when in reality
+        this might not be true. But for small enough eps, this is fine.
+
+        Args:
+            ji ([type]): [description]
+            joint_pose ([type], optional): [description]. Defaults to None.
+        """
+        assert (0 <= ji < self.num_joints)
+        offset = np.zeros(self.num_joints)
+        eps = 1.0 * math.pi / 180.0  # 1 degree
+        offset[ji] = eps
+
+        if joint_pose is None:
+            joint_pose = np.array(self.joint_pose)
+        else:
+            joint_pose = np.array(joint_pose)
+
+        # find EE positions at both joint poses and find EE dist btwn them
+        j1 = joint_pose + offset
+        self.reset(joint_pose=j1)
+        EE_pos1 = np.array(self.get_joint_positions()[-1][4])
+        j2 = joint_pose - offset
+        self.reset(joint_pose=j2)
+        EE_pos2 = np.array(self.get_joint_positions()[-1][4])
+        ddist = np.linalg.norm(j1 - j2)
+
+        # calculate max omega(dtheta/dt)
+        vel = ddist / dt
+        omega = 2 * eps / dt
+        return omega * (self.max_EE_vel / vel)
+
+    def get_joint_positions(self):
+        """Returns positions of joints(not links for some reason). Verified this by visualization:
+        https://docs.google.com/presentation/d/1izGIT9tCxVwzC4M7tZkf-GsBYcn_lbFSKw1kx-zbDK0/edit#slide=id.g8bf9a44303_0_0
+        """
+        joint_states = p.getLinkStates(self.kukaId, range(self.num_joints))
+        return [state[4] for state in joint_states]
 
     def reset(self, joint_pose):
         self.joint_pose = joint_pose

@@ -210,19 +210,19 @@ class Environment(object):
                 start = State(x=init_joints[qi], v=0, t=0)
                 end = State(
                     x=target_joint_pose[qi], v=0,
-                    t=self.min_iters * self.dt)
-                dqmax = self.arm.calc_max_joint_vel(
-                    ji=qi, dt=self.dt, joint_pose=init_joints)
+                    t=self.min_iters)
+                # dqmax = self.arm.calc_max_joint_vel(
+                #     ji=qi, dt=self.dt, joint_pose=init_joints)
                 vel_profile = self.gen_trapezoidal_velocity_profile(
-                    start=start, final=end, dqmax=dqmax, dt=self.dt)
+                    start=start, final=end, dt=1.0, duty_cycle=0.2) / self.dt
                 joint_vel_traj[:, qi] = vel_profile
         # don't create linear interp, just let internal pybullet PID get to target
-        joint_traj = np.array([init_joints,
-                               target_joint_pose])
+        # joint_traj = np.array([init_joints,
+        #                        target_joint_pose])
 
-        return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+        return self.simulate_plan(init_pose=init_joints, vel_traj=joint_vel_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
-    def simulate_plan(self, joint_traj, bottle_pos, bottle_ori):
+    def simulate_plan(self, init_pose, vel_traj, bottle_pos, bottle_ori):
         """Run simulation with given joint-space trajectory. Does not reset arm
         joint angles after simulation is done, so that value can be guaranteed to be untouched.
 
@@ -232,7 +232,7 @@ class Environment(object):
         Returns:
             [type] -- [description]
         """
-        self.arm.reset(joint_traj[0, :])
+        self.arm.reset(init_pose)
         init_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
         prev_arm_pos = np.copy(init_arm_pos)
@@ -254,17 +254,17 @@ class Environment(object):
         EE_error = 0
 
         iter = 0
-        traj_len = joint_traj.shape[0]
+        traj_len = vel_traj.shape[0]
         while iter < self.min_iters or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
-            next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
-            for ji, jval in enumerate(next_joint_pose):
+            next_joint_vel = vel_traj[min(iter, traj_len - 1), :]
+            for ji, jval in enumerate(next_joint_vel):
                 p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
                                         jointIndex=ji,
-                                        controlMode=p.POSITION_CONTROL,
-                                        targetPosition=jval,
+                                        controlMode=p.VELOCITY_CONTROL,
+                                        targetVelocity=jval,
                                         force=self.arm.force,
-                                        positionGain=self.arm.position_gain)
+                                        velocityGain=0.5)
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
@@ -316,7 +316,7 @@ class Environment(object):
         return cost, bottle_pos, bottle_ori, self.arm.joint_pose
 
     @staticmethod
-    def gen_trapezoidal_velocity_profile(start: State, final: State, dqmax, dt,
+    def gen_trapezoidal_velocity_profile(start: State, final: State, dt,
                                          duty_cycle):
         """Source:
         https://drive.google.com/file/d/1OIw3erlI6zIOfEqbsA0W1lyYh6k5vS3y/view?usp=sharing
@@ -330,38 +330,25 @@ class Environment(object):
         """
         q0, dq0, t0 = start.x, start.v, start.t
         qf, dqf, tf = final.x, final.v, final.t
+        assert(0 < duty_cycle <= 0.5)
         tr = duty_cycle * (tf - t0)
         vm = (qf - q0) / (tf - t0 - tr)
+        ta = t0 + tr
+        tb = tf - tr
 
-        # calculate time needed for velocity to ramp up from init vel to max
-        if np.isclose(dqmax, dq0):
-            tr_up = 0
-            ta = t0
-            ramp_up_profile = []
-        else:
-            tr_up = tf - t0 - (qf - q0) / (dqmax - dq0)
-            ta = t0 + tr_up
-            ts = np.linspace(start=t0, stop=ta,
-                             num=int((ta - t0) / dt)) - t0
-            # calculate ramp-up velocity profile
-            ramp_up_profile = (dqmax / tr_up) * ts
+        ts = np.linspace(start=t0, stop=ta,
+                         num=int((ta - t0) / dt)) - t0
+        # calculate ramp-up velocity profile
+        ramp_up_profile = (vm / tr) * ts
 
-        # time needed for velocity to ramp down to final vel
-        if np.isclose(dqmax, dqf):
-            tr_down = 0
-            tb = tf
-            ramp_down_profile = []
-        else:
-            tr_down = tf - t0 - (qf - q0) / (dqmax - dqf)
-            tb = tf - tr_down
-            ts = tf - np.linspace(start=tb, stop=tf,
-                                  num=int((tf - tb) / dt))
-            # calculate ramp-down velocity profile
-            ramp_down_profile = (dqmax / tr_down) * ts
+        ts = tf - np.linspace(start=tb, stop=tf,
+                              num=int((tf - tb) / dt))
+        # calculate ramp-down velocity profile
+        ramp_down_profile = (vm / tr) * ts
 
         # constant velocity profile
         assert (tb >= ta)
-        const_profile = dqmax * np.ones(int((tb - ta) / dt))
+        const_profile = vm * np.ones(int((tb - ta) / dt))
 
         return np.concatenate([ramp_up_profile, const_profile, ramp_down_profile])
 
@@ -402,16 +389,17 @@ def test_environment_avg_quat():
 
 
 def test_trap_vel_profile():
-    t0, tf = 5, 12
+    t0, tf = 4, 12
     x0, xf = 2, 9
-    v0, vf = 1, 4
+    v0, vf = 0, 0
     dt = 0.5
     start = State(x=x0, v=v0, t=t0)
     final = State(x=xf, v=vf, t=tf)
-    vmax = 4
+    vmax = 10
+    duty_cycle = 0.2
     # returns velocity profile of length N-1 for N waypoints
     vel_profile = Environment.gen_trapezoidal_velocity_profile(
-        start, final, vmax, dt)
+        start, final, dt, duty_cycle=duty_cycle)
 
     N = int((tf - t0) / float(dt))
     ts = np.linspace(start=t0, stop=tf, num=N)
@@ -425,6 +413,3 @@ def test_trap_vel_profile():
     plt.plot(ts, xs, label="pos")
     plt.legend(loc="upper right")
     plt.show()
-
-
-test_trap_vel_profile()

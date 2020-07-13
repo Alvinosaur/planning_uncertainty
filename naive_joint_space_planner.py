@@ -152,8 +152,8 @@ class NaivePlanner():
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
-            # print("Expanded:")
-            # print(n)
+            print("Expanded:")
+            print(n)
             # print("Heuristic: %.2f" % self.heuristic(n.state))
             # self.debug_view_state(state)
 
@@ -203,10 +203,10 @@ class NaivePlanner():
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * f
-                    print("Trans, heuristic change: %.3f, %.3f" % (
-                        trans_cost, self.eps * (self.heuristic(state) - self.heuristic(next_state))))
-                    print("Overall new cost: %.2f" % overall_cost)
-                    print(next_state_key)
+                    # print("Trans, heuristic change: %.3f, %.3f" % (
+                    #     trans_cost, self.eps * (self.heuristic(state) - self.heuristic(next_state))))
+                    # print("Overall new cost: %.2f" % overall_cost)
+                    # print(next_state_key)
 
                     # add to open set
                     heapq.heappush(open_set, Node(

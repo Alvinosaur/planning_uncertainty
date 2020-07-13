@@ -21,6 +21,8 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
     if visualize:
         # print(policy)
         bottle_pos = planner.bottle_pos_from_state(planner.start)
+        init_joints = planner.joint_pose_from_state(planner.start)
+        env.arm.reset(init_joints)
         bottle_ori = np.array([0, 0, 0, 1])
         for dq in policy:
             # run deterministic simulation for now
@@ -58,7 +60,7 @@ def main():
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
-            p.STATE_LOGGING_VIDEO_MP4, "limitation_of_ignoring_dynamics_constraints.mp4")
+            p.STATE_LOGGING_VIDEO_MP4, "temp.mp4")
 
     # bottle
     # bottle_start_pos = np.array(
