@@ -112,7 +112,8 @@ class Arm:
         self.base_pos = np.array([0, 0, 0.1])
         self.min_dist = 0.3
         self.MAX_REACH = None  # need to set with set_general_max_reach()
-        self.max_EE_vel = 5  # m/s
+        self.max_EE_vel = 1  # m/s
+        self.max_joint_acc = 0.5
 
         # NOTE: taken from example:
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
@@ -175,10 +176,10 @@ class Arm:
         # find EE positions at both joint poses and find EE dist btwn them
         j1 = joint_pose + offset
         self.reset(joint_pose=j1)
-        EE_pos1 = np.array(self.get_joint_positions()[-1][4])
+        EE_pos1 = np.array(self.get_joint_positions()[-1])
         j2 = joint_pose - offset
         self.reset(joint_pose=j2)
-        EE_pos2 = np.array(self.get_joint_positions()[-1][4])
+        EE_pos2 = np.array(self.get_joint_positions()[-1])
         ddist = np.linalg.norm(j1 - j2)
 
         # calculate max omega(dtheta/dt)

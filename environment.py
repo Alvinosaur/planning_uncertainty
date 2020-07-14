@@ -64,6 +64,7 @@ class Environment(object):
     def __init__(self, arm, bottle, is_viz=True, use_3D=True, min_iters=10, max_iters=150):
         # store arm and objects
         self.arm = arm
+        self.amax = 1
         self.bottle = bottle
 
         # simulation visualization params
@@ -204,22 +205,30 @@ class Environment(object):
             init_joints = np.array(init_joints)
         target_joint_pose = init_joints + action
 
-        joint_vel_traj = np.zeros((self.min_iters, self.arm.num_DOF))
+        max_iters = 0
+        joint_vel_traj = None
         for qi, dq in enumerate(action):
             if not np.isclose(dq, 0):
                 start = State(x=init_joints[qi], v=0, t=0)
                 end = State(
                     x=target_joint_pose[qi], v=0,
-                    t=self.min_iters)
-                # dqmax = self.arm.calc_max_joint_vel(
-                #     ji=qi, dt=self.dt, joint_pose=init_joints)
-                vel_profile = self.gen_trapezoidal_velocity_profile(
-                    start=start, final=end, dt=1.0, duty_cycle=0.2) / self.dt
+                    t=None)  # final time unbounded
+                dqmax = self.arm.calc_max_joint_vel(
+                    ji=qi, dt=self.dt, joint_pose=init_joints)
+                amax = self.arm.max_joint_acc * self.dt
+                vm = dqmax * self.dt
+                vel_profile = self.gen_trapezoidal_velocity_profile_unbounded_time(
+                    start=start, final=end, dt=1.0, max_a=amax, vm=vm) / self.dt
+                max_iters = len(vel_profile)
+                joint_vel_traj = np.zeros((max_iters, self.arm.num_DOF))
                 joint_vel_traj[:, qi] = vel_profile
+                break
+
         # don't create linear interp, just let internal pybullet PID get to target
         # joint_traj = np.array([init_joints,
         #                        target_joint_pose])
-
+        # np.zeros((self.min_iters, self.arm.num_DOF))
+        print("target: ", target_joint_pose)
         return self.simulate_plan(init_pose=init_joints, vel_traj=joint_vel_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
     def simulate_plan(self, init_pose, vel_traj, bottle_pos, bottle_ori):
@@ -255,7 +264,7 @@ class Environment(object):
 
         iter = 0
         traj_len = vel_traj.shape[0]
-        while iter < self.min_iters or (iter < self.max_iters and not bottle_stopped):
+        while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
             next_joint_vel = vel_traj[min(iter, traj_len - 1), :]
             for ji, jval in enumerate(next_joint_vel):
@@ -313,6 +322,7 @@ class Environment(object):
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
+        print("actual: ", self.arm.joint_pose)
         return cost, bottle_pos, bottle_ori, self.arm.joint_pose
 
     @staticmethod
@@ -335,6 +345,45 @@ class Environment(object):
         vm = (qf - q0) / (tf - t0 - tr)
         ta = t0 + tr
         tb = tf - tr
+
+        ts = np.linspace(start=t0, stop=ta,
+                         num=int((ta - t0) / dt)) - t0
+        # calculate ramp-up velocity profile
+        ramp_up_profile = (vm / tr) * ts
+
+        ts = tf - np.linspace(start=tb, stop=tf,
+                              num=int((tf - tb) / dt))
+        # calculate ramp-down velocity profile
+        ramp_down_profile = (vm / tr) * ts
+
+        # constant velocity profile
+        assert (tb >= ta)
+        const_profile = vm * np.ones(int((tb - ta) / dt))
+
+        return np.concatenate([ramp_up_profile, const_profile, ramp_down_profile])
+
+    @staticmethod
+    def gen_trapezoidal_velocity_profile_unbounded_time(start: State, final: State, dt,
+                                                        max_a, vm):
+        """Source:
+        https://drive.google.com/file/d/1OIw3erlI6zIOfEqbsA0W1lyYh6k5vS3y/view?usp=sharing
+
+        returns velocity profile of length N-1 for N waypoints
+
+        Args:
+            start (State): [intial angle, initial angular vel, init time]
+            final (State): [final angle, final angular vel, final time]
+            dqmax (float): max angular velocity
+        """
+        q0, dq0, t0 = start.x, start.v, start.t
+        # unspecified final time
+        qf, dqf = final.x, final.v
+        tr = vm / max_a
+        print(tr)
+        tf = (qf - q0) / vm + t0 + tr
+        ta = t0 + tr
+        tb = tf - tr
+        print(tf, ta, tb)
 
         ts = np.linspace(start=t0, stop=ta,
                          num=int((ta - t0) / dt)) - t0
