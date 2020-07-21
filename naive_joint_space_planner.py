@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 # import seaborn as sn
 import heapq
 from pyquaternion import Quaternion
+import kdtree
 
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace
@@ -56,6 +57,26 @@ while state != start:
     state = prev
 """
 
+import kdtree
+
+
+class AngleKDNode(kdtree.KDNode):
+    def axis_dist(self, point, axis):
+        """
+        Changed to be shortest abs distance btwn two angles (int degrees)
+        """
+        diff = abs(self.data[axis] - point[axis]) % 360
+        # This is either the distance or 360 - distance
+        if diff > 180:
+            return 360 - diff
+        else:
+            return diff
+
+
+def create_angle_kdtree(dimensions):
+    sel_axis = (lambda prev_axis: (prev_axis + 1) % dimensions)
+    return AngleKDNode(sel_axis=sel_axis, axis=0, dimensions=dimensions)
+
 
 class Node(object):
     def __init__(self, cost, state, bottle_ori=np.array([0, 0, 0, 1])):
@@ -73,7 +94,7 @@ class Node(object):
 
 
 class NaivePlanner():
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True):
+    def __init__(self, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True):
         """[summary]
 
         Args:
@@ -91,23 +112,27 @@ class NaivePlanner():
             use_3D (bool, optional): whether to use 3D or 2D euclidean distance. Defaults to True.
         """
         # state = [x,y,z,q1,q2...,q7]
-        self.start = np.array(start)
-        self.goal = np.array(goal)
         self.env = env
         self.xbounds = np.array(xbounds)  # [minx, maxx]
         self.ybounds = np.array(ybounds)  # [miny, maxy]
-        self.sq_dist_thresh = dist_thresh ** 2
-        self.eps = eps
         self.dx, self.dy, self.dz = dx, dy, dz
-        # discretize continuous state space
         self.dpos = np.array([dx, dy, dz])
-        self.use_3D = use_3D
 
         # define action space
         self.da = da_rad
         self.num_joints = env.arm.num_joints
         self.A = ActionSpace(num_DOF=self.num_joints, da_rad=self.da)
+
+        # store state g-values and all states(joint space) that are seen
         self.G = dict()
+        # kdtree contains states in set of (OPEN U CLOSED)
+        self.kdtree = create_angle_kdtree(dimensions=self.num_joints)
+
+        # search parameters
+        self.dist_thresh = dist_thresh
+        self.eps = eps
+        self.use_3D = use_3D
+        self.NORMALIZER = 4 * da_rad * 180 / math.pi
 
         # discretize continuous state/action space
         self.xi_bounds = (
@@ -127,11 +152,21 @@ class NaivePlanner():
         link_states = p.getLinkStates(self.env.arm.kukaId, range(7))
         eex, eey = link_states[-1][4][:2]
         dist = ((bx - eex) ** 2 + (by - eey) ** 2) ** 0.5
-        print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
+        # print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
 
-    def plan(self):
+    def plan(self, start, goal):
+        """Naive A* planner that replans from scratch
+
+        Returns:
+            [type]: [description]
+        """
+        # state = [x,y,z,q1,q2...,q7]
+        self.start = np.array(start)
+        self.goal = np.array(goal)
         # initialize open set with start and G values
         open_set = [Node(0, self.start)]
+        self.kdtree = create_angle_kdtree(dimensions=self.num_joints)
+        self.add_to_kdtree(self.start)
         closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
@@ -202,16 +237,18 @@ class NaivePlanner():
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
-                    overall_cost = new_G + self.eps * f
+                    eps = self.calc_soft_eps(state)
+                    print("Soft eps: %.2f" % eps)
+                    overall_cost = new_G + self.eps * eps * f
                     # print("Trans, heuristic change: %.3f, %.3f" % (
                     #     trans_cost, self.eps * (self.heuristic(state) - self.heuristic(next_state))))
                     # print("Overall new cost: %.2f" % overall_cost)
                     # print(next_state_key)
 
-                    # add to open set
+                    # add to open set and kdtree
                     heapq.heappush(open_set, Node(
                         cost=overall_cost, state=next_state, bottle_ori=next_bottle_ori))
-                    # print(overall_cost, f)
+                    self.add_to_kdtree(next_state)
 
                     # build directed graph
                     transitions[next_state_key] = (state_key, ai)
@@ -236,8 +273,48 @@ class NaivePlanner():
         policy.reverse()
         return planned_path, policy
 
-    def dist_arm_to_bottle(self, bottle_pos, joint_pose,
-                           use_EE=False):
+    def calc_soft_eps(self, cur):
+        """Idea is to multiply heuristic with additional factor that measures how likely a state is to be a duplicate of another state, meaning there is no point in expanding it. We define "duplicity" as distance of  joint angle configuration. Original paper: Escaping Local Minima in Search-Based Planning using Soft Duplicate Detection
+
+        Args:
+            cur ([type]): [description]
+            next (function): [description]
+
+        Returns:
+            [type]: [description]
+        """
+        cur_joints_deg = np.round(
+            self.joint_pose_from_state(cur) * 180 / math.pi).astype(int)
+        # don't include 1st nearest neighbor, which will be the state itself
+        try:
+            nn, ang_dist_deg = self.kdtree.search_knn(
+                cur_joints_deg, k=2)[1]
+            nearest_neighbor_joints = nn.data
+            eps = 1 - (ang_dist_deg / self.NORMALIZER)
+            # print("Angular dist: %d State: %s with nn: %s" % (
+            #     ang_dist_deg,
+            #     self.state_to_str(cur_joints_deg),
+            #     self.state_to_str(nearest_neighbor_joints)))
+        except Exception as e:
+            print("Failed to find knn=2: %s" % e)
+            eps = 1
+
+        # calc dist btwn two EE positions and use to calculate eps
+
+        if not (0 <= eps <= 1):
+            print("Soft epsilon was negative(%.2f)! State: %s with nn: %s" % (
+                eps,
+                self.state_to_str(cur_joints_deg),
+                self.state_to_str(nearest_neighbor_joints)))
+            assert(False)
+        return eps
+
+    def dist_bottle_to_goal(self, state):
+        bottle_pos = np.array(self.bottle_pos_from_state(state))
+        goal_bottle_pos = np.array(self.bottle_pos_from_state(self.goal))
+        return np.linalg.norm(bottle_pos[:2] - goal_bottle_pos[:2])
+
+    def dist_arm_to_bottle(self, state, use_EE=False):
         """Calculates distance from bottle to arm in two forms:
         1. distance from end-effector(EE) to bottle
         2. shortest distance from any non-static joint or middle of link to bottle
@@ -252,6 +329,8 @@ class NaivePlanner():
         Returns:
             float: distance from arm to bottle
         """
+        bottle_pos = self.bottle_pos_from_state(state)
+        joint_pose = self.joint_pose_from_state(state)
         bottle_pos = bottle_pos + self.env.bottle.center_of_mass
         bx, by, bz = bottle_pos
 
@@ -278,13 +357,6 @@ class NaivePlanner():
             min_sq_dist = None
             min_i = 0
             for i, pos in enumerate(positions):
-                # color = [1, 0, 0] if i < len(joint_positions[2:]) else [0, 1, 0]
-                # debug_pos = np.array([lx, ly, lz])
-                # Environment.draw_line(
-                #     lineFrom=debug_pos,
-                #     lineTo=debug_pos + np.array([0, 0, 1]),
-                #     lineColorRGB=color,
-                #     lineWidth=10, lifeTime=self.env.max_iters/float(self.env.SIM_VIZ_FREQ))
                 if self.use_3D:
                     sq_dist = np.linalg.norm(np.array(pos) - bottle_pos[:3])
                 else:
@@ -293,41 +365,25 @@ class NaivePlanner():
                 if min_sq_dist is None or sq_dist < min_sq_dist:
                     min_sq_dist = sq_dist
                     min_i = i
-
-            # debug
-            # if min_i >= len(joint_positions[:2]):
-            #     print("closest is midpoint %d, %.2f" %
-            #           (min_i - len(joint_positions[:2]), min_sq_dist))
-            # else:
-            #     print("closest is link %d, %.2f" % (min_i, min_sq_dist))
-            # debug_pos = np.array(positions[min_i])
-            # Environment.draw_line(
-            #     lineFrom=debug_pos,
-            #     lineTo=debug_pos + np.array([0, 0, 1]),
-            #     lineColorRGB=[1, 0, 0],
-            #     lineWidth=10, lifeTime=self.env.max_iters/float(self.env.SIM_VIZ_FREQ))
             return math.sqrt(min_sq_dist)
 
-        # print(math.sqrt(min_sq_dist))
-        # print("(%.2f, %.2f, %.2f), (%.2f, %.2f, %.2f)" % (
-        #     joint_positions[0][0], joint_positions[0][1], joint_positions[0][2], joint_positions[1][0], joint_positions[1][1], joint_positions[1][2]))
-
     def heuristic(self, state):
-        bottle_pos = np.array(self.bottle_pos_from_state(state))
-        goal_bottle_pos = np.array(self.bottle_pos_from_state(self.goal))
-        # exception is to not use 3D for bottle position since only on flat environment
-        dist_to_goal = np.linalg.norm(bottle_pos[: 2] - goal_bottle_pos[: 2])
-        joints = self.joint_pose_from_state(state)
+        dist_to_goal = self.dist_bottle_to_goal(state)
+
         dist_arm_to_bottle = self.dist_arm_to_bottle(
-            bottle_pos, joints, use_EE=False)
+            state, use_EE=False)
         # print("BG: %.2f, EB: %.2f" % (dist_to_goal, dist_arm_to_bottle))
         return dist_to_goal + dist_arm_to_bottle
 
     def reached_goal(self, state):
-        x, y, _ = self.bottle_pos_from_state(state)
-        gx, gy, _ = self.bottle_pos_from_state(self.goal)
-        dist_to_goal = (x - gx) ** 2 + (y - gy) ** 2
-        return dist_to_goal < self.sq_dist_thresh
+        dist_to_goal = self.dist_bottle_to_goal(state)
+        print("Pos: %.2f,%.2f" % tuple(self.bottle_pos_from_state(state)[:2]))
+        print("%.2f ?< %.2f" % (dist_to_goal, self.dist_thresh))
+        return dist_to_goal < self.dist_thresh
+
+    def add_to_kdtree(self, state):
+        joint_pos_rad = self.joint_pose_from_state(state)
+        self.kdtree.add(np.round(joint_pos_rad * 180 / math.pi).astype(int))
 
     def state_to_key(self, state):
         pos = np.array(self.bottle_pos_from_state(state))
@@ -347,6 +403,11 @@ class NaivePlanner():
         #                      self.yi_bounds[0] <= yi <= self.yi_bounds[1])
         # if out_of_bounds:
         #     return None
+
+    @ staticmethod
+    def state_to_str(state):
+        s = ", ".join(["%.2f" % val for val in state])
+        return s
 
     @ staticmethod
     def is_invalid_transition(trans_cost):
