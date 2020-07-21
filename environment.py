@@ -115,7 +115,7 @@ class Environment(object):
         some probability.
         """
         avg_cost = 0
-        avg_next_bpos = np.zeros(2)
+        avg_next_bpos = np.zeros(3)
         # next_bottle_oris = np.zeros(shape=(4, self.num_rand_samples))  # 4 x N
         avg_joint_pos = np.zeros(self.arm.num_DOF)
         for sim_iter in range(self.num_rand_samples):
