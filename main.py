@@ -46,12 +46,6 @@ def direct_plan_execution(start, goal, planner: NaivePlanner, env: Environment,
         exit()
 
 
-# def interleaved_replanning_execution():
-#     planner = NaivePlanner(start, goal, env, xbounds,
-#                            ybounds, dist_thresh, eps)
-#     state_path, policy = planner.plan()
-
-
 def main():
     VISUALIZE = False
     REPLAY_RESULTS = False
@@ -71,12 +65,12 @@ def main():
             p.STATE_LOGGING_VIDEO_MP4, "temp.mp4")
 
     # bottle
-    bottle_start_pos = np.array(
-        [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
     # bottle_start_pos = np.array(
-    #     [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    # bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
+    #     [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    # bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
+    bottle_start_pos = np.array(
+        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
@@ -94,7 +88,7 @@ def main():
     # starting end-effector pos, not base pos
     EE_start_pos = np.array([0.5, 0.3, 0.2])
     base_start_ori = np.array([0, 0, 0, 1]).astype(float)
-    max_force = 100  # N
+    max_force = 20  # N
     arm = Arm(EE_start_pos=EE_start_pos,
               start_ori=base_start_ori,
               kukaId=kukaId,
@@ -111,11 +105,11 @@ def main():
     xbounds = [-0.4, -0.9]
     ybounds = [-0.1, -0.9]
     dx = dy = dz = 0.05
-    dist_thresh = 0.07
+    dist_thresh = np.linalg.norm([dx, dy, dz])
     # if  the below isn't true, you're expecting bottle to fall in exactly
     # the same state bin as the goal
     assert(dist_thresh >= dx)
-    eps = 20
+    eps = 40
     da_rad = 15 * math.pi / 180.0
 
     # run planner and visualize result

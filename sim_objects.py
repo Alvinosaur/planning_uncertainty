@@ -140,7 +140,7 @@ class Arm:
         self.rprime = np.linalg.norm(self.max_straight_pos[:2]) - self.LE
         self.target_velocity = 0
         self.force = max_force
-        self.position_gain = 0.1
+        self.position_gain = 0.5
 
         self.EE_idx = 6
         self.num_joints = self.num_DOF = p.getNumJoints(self.kukaId)

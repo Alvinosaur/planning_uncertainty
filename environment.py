@@ -9,13 +9,7 @@ from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 
 from sim_objects import Arm, Bottle
-
-
-class State(object):
-    def __init__(self, x, v, t):
-        self.x = x
-        self.v = v
-        self.t = t
+from trap_velocity_generator import gen_trapezoidal_velocity_profile, State
 
 
 class ActionSpace():
@@ -192,7 +186,7 @@ class Environment(object):
 
         return mode_cost * cost_disc, ns_i * state_disc
 
-    def run_sim(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
+    def run_sim(self, action, init_joints=None, bottle_pos=None, bottle_ori=None, use_vel_control=False):
         """Deterministic simulation where all parameters are already set and
         known.
 
@@ -205,33 +199,33 @@ class Environment(object):
             init_joints = np.array(init_joints)
         target_joint_pose = init_joints + action
 
-        max_iters = 0
-        joint_vel_traj = None
-        for qi, dq in enumerate(action):
-            if not np.isclose(dq, 0):
-                start = State(x=init_joints[qi], v=0, t=0)
-                end = State(
-                    x=target_joint_pose[qi], v=0,
-                    t=None)  # final time unbounded
-                dqmax = self.arm.calc_max_joint_vel(
-                    ji=qi, dt=self.dt, joint_pose=init_joints)
-                amax = self.arm.max_joint_acc * self.dt
-                vm = dqmax * self.dt
-                vel_profile = self.gen_trapezoidal_velocity_profile_unbounded_time(
-                    start=start, final=end, dt=1.0, max_a=amax, vm=vm) / self.dt
-                max_iters = len(vel_profile)
-                joint_vel_traj = np.zeros((max_iters, self.arm.num_DOF))
-                joint_vel_traj[:, qi] = vel_profile
-                break
+        if use_vel_control:
+            joint_vel_traj = np.zeros((self.min_iters, self.arm.num_DOF))
+            for qi, dq in enumerate(action):
+                if not np.isclose(dq, 0):
+                    start = State(x=init_joints[qi], v=0, t=0)
+                    end = State(
+                        x=target_joint_pose[qi], v=0,
+                        t=self.min_iters)
+                    # dqmax = self.arm.calc_max_joint_vel(
+                    #     ji=qi, dt=self.dt, joint_pose=init_joints)
+                    vel_profile = gen_trapezoidal_velocity_profile(
+                        start=start, final=end, dt=1.0, duty_cycle=0.2) / self.dt
+                    joint_vel_traj[:, qi] = vel_profile
 
-        # don't create linear interp, just let internal pybullet PID get to target
-        # joint_traj = np.array([init_joints,
-        #                        target_joint_pose])
-        # np.zeros((self.min_iters, self.arm.num_DOF))
-        print("target: ", target_joint_pose)
-        return self.simulate_plan(init_pose=init_joints, vel_traj=joint_vel_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+            target_traj = joint_vel_traj
 
-    def simulate_plan(self, init_pose, vel_traj, bottle_pos, bottle_ori):
+        # Position control
+        else:
+            # don't create linear interp, just let internal pybullet PID get to target
+            target_traj = np.array([init_joints, target_joint_pose])
+
+        return self.simulate_plan(init_pose=init_joints,
+                                  traj=target_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                                  use_vel_control=use_vel_control)
+
+    def simulate_plan(self, init_pose, traj, bottle_pos, bottle_ori,
+                      use_vel_control):
         """Run simulation with given joint-space trajectory. Does not reset arm
         joint angles after simulation is done, so that value can be guaranteed to be untouched.
 
@@ -257,23 +251,27 @@ class Environment(object):
         bottle_horiz_stopped = False
         bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped
 
-        # iterate through action
-        pos_change = 0  # init arbitrary
-        thresh = 0.001
-        EE_error = 0
-
         iter = 0
-        traj_len = vel_traj.shape[0]
-        while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
+        traj_len = traj.shape[0]
+        while iter < self.min_iters or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
-            next_joint_vel = vel_traj[min(iter, traj_len - 1), :]
-            for ji, jval in enumerate(next_joint_vel):
-                p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
-                                        jointIndex=ji,
-                                        controlMode=p.VELOCITY_CONTROL,
-                                        targetVelocity=jval,
-                                        force=self.arm.force,
-                                        velocityGain=0.5)
+            next_target = traj[min(iter, traj_len - 1), :]
+            if use_vel_control:
+                for ji, joint_vel in enumerate(next_target):
+                    p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
+                                            jointIndex=ji,
+                                            controlMode=p.VELOCITY_CONTROL,
+                                            targetVelocity=joint_vel,
+                                            force=self.arm.force,
+                                            velocityGain=0.5)
+            else:
+                for ji, joint_pos in enumerate(next_target):
+                    p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
+                                            jointIndex=ji,
+                                            controlMode=p.POSITION_CONTROL,
+                                            targetPosition=joint_pos,
+                                            force=self.arm.force,
+                                            positionGain=self.arm.position_gain)
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
@@ -325,82 +323,6 @@ class Environment(object):
         print("actual: ", self.arm.joint_pose)
         return cost, bottle_pos, bottle_ori, self.arm.joint_pose
 
-    @staticmethod
-    def gen_trapezoidal_velocity_profile(start: State, final: State, dt,
-                                         duty_cycle):
-        """Source:
-        https://drive.google.com/file/d/1OIw3erlI6zIOfEqbsA0W1lyYh6k5vS3y/view?usp=sharing
-
-        returns velocity profile of length N-1 for N waypoints
-
-        Args:
-            start (State): [intial angle, initial angular vel, init time]
-            final (State): [final angle, final angular vel, final time]
-            dqmax (float): max angular velocity
-        """
-        q0, dq0, t0 = start.x, start.v, start.t
-        qf, dqf, tf = final.x, final.v, final.t
-        assert(0 < duty_cycle <= 0.5)
-        tr = duty_cycle * (tf - t0)
-        vm = (qf - q0) / (tf - t0 - tr)
-        ta = t0 + tr
-        tb = tf - tr
-
-        ts = np.linspace(start=t0, stop=ta,
-                         num=int((ta - t0) / dt)) - t0
-        # calculate ramp-up velocity profile
-        ramp_up_profile = (vm / tr) * ts
-
-        ts = tf - np.linspace(start=tb, stop=tf,
-                              num=int((tf - tb) / dt))
-        # calculate ramp-down velocity profile
-        ramp_down_profile = (vm / tr) * ts
-
-        # constant velocity profile
-        assert (tb >= ta)
-        const_profile = vm * np.ones(int((tb - ta) / dt))
-
-        return np.concatenate([ramp_up_profile, const_profile, ramp_down_profile])
-
-    @staticmethod
-    def gen_trapezoidal_velocity_profile_unbounded_time(start: State, final: State, dt,
-                                                        max_a, vm):
-        """Source:
-        https://drive.google.com/file/d/1OIw3erlI6zIOfEqbsA0W1lyYh6k5vS3y/view?usp=sharing
-
-        returns velocity profile of length N-1 for N waypoints
-
-        Args:
-            start (State): [intial angle, initial angular vel, init time]
-            final (State): [final angle, final angular vel, final time]
-            dqmax (float): max angular velocity
-        """
-        q0, dq0, t0 = start.x, start.v, start.t
-        # unspecified final time
-        qf, dqf = final.x, final.v
-        tr = vm / max_a
-        print(tr)
-        tf = (qf - q0) / vm + t0 + tr
-        ta = t0 + tr
-        tb = tf - tr
-        print(tf, ta, tb)
-
-        ts = np.linspace(start=t0, stop=ta,
-                         num=int((ta - t0) / dt)) - t0
-        # calculate ramp-up velocity profile
-        ramp_up_profile = (vm / tr) * ts
-
-        ts = tf - np.linspace(start=tb, stop=tf,
-                              num=int((tf - tb) / dt))
-        # calculate ramp-down velocity profile
-        ramp_down_profile = (vm / tr) * ts
-
-        # constant velocity profile
-        assert (tb >= ta)
-        const_profile = vm * np.ones(int((tb - ta) / dt))
-
-        return np.concatenate([ramp_up_profile, const_profile, ramp_down_profile])
-
     @ staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
         p.addUserDebugLine(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime)
@@ -435,30 +357,3 @@ def test_environment_avg_quat():
     avg_quat = Environment.avg_quaternion(quaternions)
     avg_angles = R.from_quat(avg_quat).as_euler('zyx', degrees=True)
     print(avg_angles)
-
-
-def test_trap_vel_profile():
-    t0, tf = 4, 12
-    x0, xf = 2, 9
-    v0, vf = 0, 0
-    dt = 0.5
-    start = State(x=x0, v=v0, t=t0)
-    final = State(x=xf, v=vf, t=tf)
-    vmax = 10
-    duty_cycle = 0.2
-    # returns velocity profile of length N-1 for N waypoints
-    vel_profile = Environment.gen_trapezoidal_velocity_profile(
-        start, final, dt, duty_cycle=duty_cycle)
-
-    N = int((tf - t0) / float(dt))
-    ts = np.linspace(start=t0, stop=tf, num=N)
-    xs = np.zeros(N)
-    xs[0] = x0
-    x = x0
-    for i in range(N - 1):
-        x += vel_profile[i] * dt
-        xs[i + 1] = x
-    plt.plot(ts[:-1], vel_profile, label="vel")
-    plt.plot(ts, xs, label="pos")
-    plt.legend(loc="upper right")
-    plt.show()
