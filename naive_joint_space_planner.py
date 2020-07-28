@@ -187,8 +187,9 @@ class NaivePlanner():
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
-            print("Expanded:")
-            print(n)
+            print("Expanded: %s" %
+                  self.state_to_str(state[3:] * 180 / math.pi))
+            # print(n)
             # print("Heuristic: %.2f" % self.heuristic(n.state))
             # self.debug_view_state(state)
 
@@ -209,6 +210,7 @@ class NaivePlanner():
             # extra current total move-cost of current state
             assert(state_key in self.G)
             cur_cost = self.G[state_key]
+            # dup_eps = self.calc_soft_eps(state)
 
             # explore all actions from this state
             for ai in self.A.action_ids:
@@ -237,9 +239,11 @@ class NaivePlanner():
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
-                    eps = self.calc_soft_eps(state)
-                    print("Soft eps: %.2f" % eps)
-                    overall_cost = new_G + self.eps * eps * f
+
+                    overall_cost = new_G + self.eps * f
+                    # print("Soft eps: %.2f, g: %.2f, f: %.2f, eps*f: %.2f, cost: %.2f, action: %s, next: %s" %
+                    #       (dup_eps, new_G, f, self.eps * dup_eps * f, overall_cost,
+                    #        self.state_to_str(dq * 180 / math.pi), self.state_to_str(next_state[3:] * 180 / math.pi)))
                     # print("Trans, heuristic change: %.3f, %.3f" % (
                     #     trans_cost, self.eps * (self.heuristic(state) - self.heuristic(next_state))))
                     # print("Overall new cost: %.2f" % overall_cost)
