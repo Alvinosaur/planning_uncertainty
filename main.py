@@ -6,19 +6,42 @@ import time
 
 from sim_objects import Bottle, Arm
 from environment import Environment
-from naive_joint_space_planner import NaivePlanner
+from naive_joint_space_planner import NaivePlanner, SINGLE, AVG, MODE
 
 
 def direct_plan_execution(start, goal, planner: NaivePlanner, env: Environment,
-                          replay_saved=False, visualize=False):
+                          replay_saved=False, visualize=False, sim_mode=SINGLE,
+                          replay_random=False):
+    if sim_mode == SINGLE:
+        filename = "results"
+    elif sim_mode == AVG:
+        filename = "results_avg"
+    else:
+        filename = "results_mode"
+
     if not replay_saved:
         state_path, policy = planner.plan(start=start, goal=goal)
-        np.savez("results", state_path=state_path, policy=policy)
+        np.savez(filename, state_path=state_path, policy=policy)
 
     else:
-        results = np.load("results_avg.npz")
+        results = np.load("%s.npz" % filename)
         policy = results["policy"]
         state_path = results["state_path"]
+
+    # set random bottle parameters
+    if replay_random:
+        # rand_fill = np.random.normal(
+        #     loc=env.mean_fillp, scale=env.std_fillp)
+        # rand_fill = np.clip(rand_fill, env.min_fill, env.max_fill)
+        # rand_fric = np.random.normal(
+        #     loc=env.mean_friction, scale=env.std_friction)
+        # rand_fric = np.clip(rand_fric, env.min_fric, env.max_fric)
+        rand_fill = env.min_fill
+        rand_fric = env.min_fric
+
+        # set random parameters
+        env.bottle.set_fill_proportion(rand_fill)
+        env.bottle.lat_fric = rand_fric
 
     if visualize:
         # print(policy)
@@ -95,8 +118,6 @@ def main():
               max_force=max_force)
     start_joints = arm.joint_pose
 
-    env = Environment(arm, bottle, is_viz=VISUALIZE,
-                      use_3D=use_3D, min_iters=50)
     start = np.concatenate(
         [bottle_start_pos, start_joints])
     # goal joints are arbitrary and populated later in planner
@@ -105,20 +126,25 @@ def main():
     xbounds = [-0.4, -0.9]
     ybounds = [-0.1, -0.9]
     dx = dy = dz = 0.05
+    da_rad = 15 * math.pi / 180.0
     dist_thresh = np.linalg.norm([dx, dy, dz])
+    state_disc = np.concatenate([[dx, dy, dz], [da_rad] * arm.num_DOF])
     # if  the below isn't true, you're expecting bottle to fall in exactly
     # the same state bin as the goal
     assert(dist_thresh >= dx)
     eps = 40
-    da_rad = 15 * math.pi / 180.0
 
     # run planner and visualize result
+    sim_mode = SINGLE
+    replay_random = True  # replay with  random bottle parameters chosen
+    env = Environment(arm, bottle, state_disc, is_viz=VISUALIZE,
+                      use_3D=use_3D, min_iters=50)
     planner = NaivePlanner(env, xbounds,
                            ybounds, dist_thresh, eps, da_rad=da_rad,
-                           dx=dx, dy=dy, dz=dz, use_3D=use_3D)
+                           dx=dx, dy=dy, dz=dz, use_3D=use_3D, sim_mode=sim_mode)
     start_time = time.time()
     direct_plan_execution(start, goal, planner, env,
-                          replay_saved=REPLAY_RESULTS, visualize=VISUALIZE)
+                          replay_saved=REPLAY_RESULTS, visualize=VISUALIZE, sim_mode=sim_mode, replay_random=replay_random)
     end_time = time.time()
     print("Time taken: %.2f" % (end_time - start_time))
     # s1 = np.array([-0.50, -0.50, 0.04, 0.00, 0.00, -0.00, 1.00,

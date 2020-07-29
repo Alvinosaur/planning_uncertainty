@@ -55,11 +55,14 @@ class Environment(object):
     SIM_FREQ = 240.0  # Hz
     dt = 1 / SIM_FREQ
 
-    def __init__(self, arm, bottle, is_viz=True, use_3D=True, min_iters=10, max_iters=150):
+    def __init__(self, arm, bottle, state_disc, is_viz=True, use_3D=True, min_iters=10, max_iters=150):
         # store arm and objects
         self.arm = arm
         self.amax = 1
         self.bottle = bottle
+
+        # state discretization for binning states
+        self.state_disc = state_disc
 
         # simulation visualization params
         self.is_viz = is_viz
@@ -80,8 +83,8 @@ class Environment(object):
         self.use_3D = use_3D
 
         # Normal distribution of internal bottle params
-        self.min_fric = 0.1
-        self.max_fric = 0.2
+        self.min_fric = 0.15
+        self.max_fric = 0.45
         self.min_fill = self.bottle.min_fill
         self.max_fill = 1.0
         self.mean_friction = (self.min_fric + self.max_fric) / 2.
@@ -108,10 +111,11 @@ class Environment(object):
         by a belief space, or distribution of possible next states, each with
         some probability.
         """
-        avg_cost = 0
-        avg_next_bpos = np.zeros(3)
-        # next_bottle_oris = np.zeros(shape=(4, self.num_rand_samples))  # 4 x N
-        avg_joint_pos = np.zeros(self.arm.num_DOF)
+        sum_cost = 0
+        sum_next_bpos = np.zeros(3)
+        next_bottle_ori_bins = []
+        next_bottle_ori_counts = []
+        sum_joint_pos = np.zeros(self.arm.num_DOF)
         for sim_iter in range(self.num_rand_samples):
             # randomly sample friction and fill-prop of bottle
             rand_fill = np.random.normal(
@@ -127,27 +131,55 @@ class Environment(object):
 
             # run sim deterministically and average cost and new bottle pos
             cost, bpos, bori, arm_pos = self.run_sim(
-                action, init_joints, bottle_pos, bottle_ori)
-            avg_cost += cost
-            avg_next_bpos += bpos
-            # next_bottle_oris[:, sim_iter] = bori
-            avg_joint_pos += arm_pos
+                action, init_joints, bottle_pos, bottle_ori,
+                use_vel_control=False)
+            sum_cost += cost
+            sum_next_bpos += bpos
 
-            # avg_bori = self.avg_quaternion(next_bottle_oris)
-        return (avg_cost / float(self.num_rand_samples),
-                avg_next_bpos / float(self.num_rand_samples),
-                bori,  # just return last bottle orientation for now
-                avg_joint_pos / float(self.num_rand_samples))
+            # averaging angles  directly like this isn't safe, but assume that  arm will reach its target  orientation the same regardless of bottle parameters
+            sum_joint_pos += arm_pos
 
-    def run_sim_mode(self, action, cost_disc, state_disc, init_joints=None, bottle_pos=None, bottle_ori=None):
+            # bin bottle orientation
+            ori_comparisons = [self.is_quat_equal(
+                bori, q) for q in next_bottle_ori_bins]
+            match = np.where(ori_comparisons)[0]
+            if len(match) == 1:
+                match_i = match[0]
+                next_bottle_ori_counts[match_i] += 1
+
+            else:
+                next_bottle_ori_bins.append(bori)
+                next_bottle_ori_counts.append(1)
+
+            # extra optimization: if arm didn't touch bottle, no need for more iterations
+            if np.allclose(bpos, bottle_pos, atol=1e-5):
+                break
+
+        most_common_ori = next_bottle_ori_bins[np.argmax(
+            next_bottle_ori_counts)]
+
+        return (sum_cost / float(self.num_rand_samples),
+                sum_next_bpos / float(self.num_rand_samples),
+                most_common_ori,
+                sum_joint_pos / float(self.num_rand_samples))
+
+    def run_sim_mode(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
         """
         Similar to run_sim_avg except output cost and next state are chosen as the mode, or most common pair of outcomes. Outputs are discretized into bins.
         """
-        # map discretized costs/states to their counts
-        cost_bins = dict()
-        max_cost_count, mode_cost = 0, None
+        class CostCountTuple():
+            def __init__(self, count, cost, bori):
+                self.count = count
+                self.cost = cost
+                self.bori = bori
+
+            def __repr__(self):
+                return "cost(%.2f), count(%d), bori(%.2f,%.2f,%.2f,%.2f)" % (
+                    self.cost, self.count, self.bori[0], self.bori[1],
+                    self.bori[2], self.bori[3])
+
+        # map discretized states to their counts and costs
         next_state_bins = dict()
-        max_next_state_count, mode_next_state = 0, None
         for sim_iter in range(self.num_rand_samples):
             # randomly sample friction and fill-prop of bottle
             rand_fill = np.random.normal(
@@ -162,29 +194,41 @@ class Environment(object):
             self.bottle.lat_fric = rand_fric
 
             # run sim deterministically and average cost and new bottle pos
-            cost, ns = self.run_sim(
-                action, init_joints, bottle_pos, bottle_ori)
+            cost, bpos, bori, arm_pos = self.run_sim(
+                action, init_joints, bottle_pos, bottle_ori,
+                use_vel_control=False)
+            ns = np.concatenate([bpos, arm_pos])
 
             # store results
-            cost_i = cost / cost_disc
-            ns_i = (ns / state_disc).astype(int)
-            if cost_i in cost_bins:
-                cost_bins[cost_i] += 1
-            else:
-                cost_bins[cost_i] = 1
-            if cost_bins[cost_i] > max_cost_count:
-                max_cost_count = cost_bins[cost_i]
-                mode_cost = cost_i
+            ns_disc = tuple((ns / self.state_disc).astype(int))
+            if ns_disc in next_state_bins:
+                next_state_bins[ns_disc].count += 1
+                next_state_bins[ns_disc].cost += cost
+                # only store bottle orientation once... not great but averaging
+                # doesn't work well
 
-            if ns_i in next_state_bins:
-                next_state_bins[ns_i] += 1
             else:
-                next_state_bins[ns_i] = 1
-            if next_state_bins[ns_i] > max_next_state_count:
-                max_next_state_count = next_state_bins[ns_i]
-                mode_next_state = ns_i
+                next_state_bins[ns_disc] = CostCountTuple(
+                    count=1, cost=cost, bori=bori)
 
-        return mode_cost * cost_disc, ns_i * state_disc
+            # extra optimization: if arm didn't touch bottle, no need for more iterations
+            # not comparing z-value because bottle will drop a bit due to ground plane offset
+            if np.allclose(bpos[:2], bottle_pos[:2], atol=1e-2):
+                break
+
+        # most common next state bin
+        mode_ns_disc = max(next_state_bins.keys(),
+                           key=lambda ns_disc: next_state_bins[ns_disc].count)
+        mode_ns_cont = np.array(mode_ns_disc) * self.state_disc
+        mode_bpos = mode_ns_cont[:3]
+        mode_arm_pos = mode_ns_cont[3:]
+
+        count = float(next_state_bins[mode_ns_disc].count)
+        # don't divide by count since not average
+        mode_bori = next_state_bins[mode_ns_disc].bori
+        avg_cost = (next_state_bins[mode_ns_disc].cost / count)
+
+        return avg_cost, mode_bpos, mode_bori, mode_arm_pos
 
     def run_sim(self, action, init_joints=None, bottle_pos=None, bottle_ori=None, use_vel_control=False):
         """Deterministic simulation where all parameters are already set and
@@ -320,12 +364,28 @@ class Environment(object):
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        print("actual: ", self.arm.joint_pose)
         return cost, bottle_pos, bottle_ori, self.arm.joint_pose
 
     @ staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
         p.addUserDebugLine(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime)
+
+    @staticmethod
+    def is_quat_equal(q1, q2, eps=0.005):
+        """Eps was determined empirically with several basic tests. Degree tolerance is ~10 degrees.
+
+        Args:
+            q1 (np.ndarray): [description]
+            q2 (np.ndarray): [description]
+            eps (float, optional): [description]. Defaults to 0.005.
+
+        Returns:
+            [type]: [description]
+        """
+        if not isinstance(q1, np.ndarray):
+            q1 = np.array(q1)
+            q2 = np.array(q2)
+        return abs(q1 @ q2) > 1 - eps
 
     @ staticmethod
     def avg_quaternion(quaternions):

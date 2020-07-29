@@ -78,7 +78,7 @@ class Node(object):
 
 
 class NaivePlanner():
-    def __init__(self, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True, sim_mode=SINGLE):
+    def __init__(self, env: Environment, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True, sim_mode=SINGLE):
         """[summary]
 
         Args:
@@ -109,6 +109,17 @@ class NaivePlanner():
 
         # store state g-values and all states(joint space) that are seen
         self.G = dict()
+
+        # method of simulating an action
+        if sim_mode == SINGLE:
+            self.sim_func = self.env.run_sim
+        elif sim_mode == AVG:
+            self.sim_func = self.env.run_sim_avg
+        elif sim_mode == MODE:
+            self.sim_func = self.env.run_sim_mode
+        else:
+            print("Invalid sim mode specified: {}, defaulting to SINGLE".format(sim_mode))
+            self.sim_func = self.env.run_sim
 
         # search parameters
         self.dist_thresh = dist_thresh
@@ -167,8 +178,8 @@ class NaivePlanner():
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
-            print("Expanded: %s" %
-                  self.state_to_str(state[3:] * 180 / math.pi))
+            print("Expanded: (%s) (%s)" %
+                  (self.state_to_str(state[:3]), self.state_to_str(state[3:] * 180 / math.pi)))
             # print(n)
             # print("Heuristic: %.2f" % self.heuristic(n.state))
             # self.debug_view_state(state)
@@ -199,7 +210,7 @@ class NaivePlanner():
 
                 # (state, action) -> (cost, next_state)
                 (trans_cost, next_bottle_pos,
-                 next_bottle_ori, next_joint_pose) = self.env.run_sim(
+                 next_bottle_ori, next_joint_pose) = self.sim_func(
                     action=dq, init_joints=cur_joints,
                     bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 

@@ -28,7 +28,7 @@ class Bottle:
         self.max_volume = self.DEFAULT_MAX_VOLUME      # fl-oz
         self.radius = self.DEFAULT_RADIUS    # m
         self.height = self.DEFAULT_HEIGHT     # m
-        self.default_fric = 0.1  # plastic-wood dynamic friction
+        self.default_fric = 0.2  # plastic-wood dynamic friction
         self.lat_fric = self.default_fric
         self.min_fill = 0.3
         self.max_fill = 1.0
