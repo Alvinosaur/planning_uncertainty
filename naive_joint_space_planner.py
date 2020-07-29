@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 # import seaborn as sn
 import heapq
 from pyquaternion import Quaternion
-import kdtree
 
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace
@@ -57,25 +56,10 @@ while state != start:
     state = prev
 """
 
-import kdtree
 
-
-class AngleKDNode(kdtree.KDNode):
-    def axis_dist(self, point, axis):
-        """
-        Changed to be shortest abs distance btwn two angles (int degrees)
-        """
-        diff = abs(self.data[axis] - point[axis]) % 360
-        # This is either the distance or 360 - distance
-        if diff > 180:
-            return 360 - diff
-        else:
-            return diff
-
-
-def create_angle_kdtree(dimensions):
-    sel_axis = (lambda prev_axis: (prev_axis + 1) % dimensions)
-    return AngleKDNode(sel_axis=sel_axis, axis=0, dimensions=dimensions)
+SINGLE = 0
+AVG = 1
+MODE = 2
 
 
 class Node(object):
@@ -94,7 +78,7 @@ class Node(object):
 
 
 class NaivePlanner():
-    def __init__(self, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True):
+    def __init__(self, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True, sim_mode=SINGLE):
         """[summary]
 
         Args:
@@ -125,8 +109,6 @@ class NaivePlanner():
 
         # store state g-values and all states(joint space) that are seen
         self.G = dict()
-        # kdtree contains states in set of (OPEN U CLOSED)
-        self.kdtree = create_angle_kdtree(dimensions=self.num_joints)
 
         # search parameters
         self.dist_thresh = dist_thresh
@@ -165,8 +147,6 @@ class NaivePlanner():
         self.goal = np.array(goal)
         # initialize open set with start and G values
         open_set = [Node(0, self.start)]
-        self.kdtree = create_angle_kdtree(dimensions=self.num_joints)
-        self.add_to_kdtree(self.start)
         closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
@@ -249,10 +229,8 @@ class NaivePlanner():
                     # print("Overall new cost: %.2f" % overall_cost)
                     # print(next_state_key)
 
-                    # add to open set and kdtree
                     heapq.heappush(open_set, Node(
                         cost=overall_cost, state=next_state, bottle_ori=next_bottle_ori))
-                    self.add_to_kdtree(next_state)
 
                     # build directed graph
                     transitions[next_state_key] = (state_key, ai)
@@ -276,42 +254,6 @@ class NaivePlanner():
         planned_path.reverse()
         policy.reverse()
         return planned_path, policy
-
-    def calc_soft_eps(self, cur):
-        """Idea is to multiply heuristic with additional factor that measures how likely a state is to be a duplicate of another state, meaning there is no point in expanding it. We define "duplicity" as distance of  joint angle configuration. Original paper: Escaping Local Minima in Search-Based Planning using Soft Duplicate Detection
-
-        Args:
-            cur ([type]): [description]
-            next (function): [description]
-
-        Returns:
-            [type]: [description]
-        """
-        cur_joints_deg = np.round(
-            self.joint_pose_from_state(cur) * 180 / math.pi).astype(int)
-        # don't include 1st nearest neighbor, which will be the state itself
-        try:
-            nn, ang_dist_deg = self.kdtree.search_knn(
-                cur_joints_deg, k=2)[1]
-            nearest_neighbor_joints = nn.data
-            eps = 1 - (ang_dist_deg / self.NORMALIZER)
-            # print("Angular dist: %d State: %s with nn: %s" % (
-            #     ang_dist_deg,
-            #     self.state_to_str(cur_joints_deg),
-            #     self.state_to_str(nearest_neighbor_joints)))
-        except Exception as e:
-            print("Failed to find knn=2: %s" % e)
-            eps = 1
-
-        # calc dist btwn two EE positions and use to calculate eps
-
-        if not (0 <= eps <= 1):
-            print("Soft epsilon was negative(%.2f)! State: %s with nn: %s" % (
-                eps,
-                self.state_to_str(cur_joints_deg),
-                self.state_to_str(nearest_neighbor_joints)))
-            assert(False)
-        return eps
 
     def dist_bottle_to_goal(self, state):
         bottle_pos = np.array(self.bottle_pos_from_state(state))
@@ -384,10 +326,6 @@ class NaivePlanner():
         print("Pos: %.2f,%.2f" % tuple(self.bottle_pos_from_state(state)[:2]))
         print("%.2f ?< %.2f" % (dist_to_goal, self.dist_thresh))
         return dist_to_goal < self.dist_thresh
-
-    def add_to_kdtree(self, state):
-        joint_pos_rad = self.joint_pose_from_state(state)
-        self.kdtree.add(np.round(joint_pos_rad * 180 / math.pi).astype(int))
 
     def state_to_key(self, state):
         pos = np.array(self.bottle_pos_from_state(state))
