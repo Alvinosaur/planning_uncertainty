@@ -43,6 +43,12 @@ class ActionSpace():
         return self.actions_mat[id, :]
 
 
+class EnvParams(object):
+    def __init__(self, bottle_fill, bottle_fric):
+        self.bottle_fill = bottle_fill
+        self.bottle_fric = bottle_fric
+
+
 class Environment(object):
     # pybullet_data built-in models
     plane_urdf_filepath = "plane.urdf"
@@ -73,8 +79,6 @@ class Environment(object):
         self.no_movement_thresh = 0.001
         self.min_iters = min_iters  # enough iters to let action execute fully
         self.max_iters = max_iters  # max number of iters in case objects oscillating
-        # number of random samples of internal params for stochastic simulation
-        self.num_rand_samples = 10
 
         # cost parameters
         self.target_bottle_pos = np.zeros((3,))
@@ -83,8 +87,8 @@ class Environment(object):
         self.use_3D = use_3D
 
         # Normal distribution of internal bottle params
-        self.min_fric = 0.15
-        self.max_fric = 0.45
+        self.min_fric = 0.05
+        self.max_fric = 0.2
         self.min_fill = self.bottle.min_fill
         self.max_fill = 1.0
         self.mean_friction = (self.min_fric + self.max_fric) / 2.
@@ -103,7 +107,18 @@ class Environment(object):
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
 
-    def run_sim_avg(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
+    def gen_random_env_param(self):
+        # randomly sample friction and fill-prop of bottle
+        rand_fill = np.random.normal(
+            loc=self.mean_fillp, scale=self.std_fillp)
+        rand_fill = np.clip(rand_fill, self.min_fill, self.max_fill)
+        rand_fric = np.random.normal(
+            loc=self.mean_friction, scale=self.std_friction)
+        rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
+        return EnvParams(bottle_fill=rand_fill, bottle_fric=rand_fric)
+
+    def run_sim_avg(self, action, sim_param_set, init_joints=None,
+                    bottle_pos=None, bottle_ori=None):
         """
         Randomly sample internal(unobservable to agent) bottle parameters for each iteration, and return cost and next state averaged over all iterations. In cases where bottle falls, next state is not included in average next state.
 
@@ -116,23 +131,11 @@ class Environment(object):
         next_bottle_ori_bins = []
         next_bottle_ori_counts = []
         sum_joint_pos = np.zeros(self.arm.num_DOF)
-        for sim_iter in range(self.num_rand_samples):
-            # randomly sample friction and fill-prop of bottle
-            rand_fill = np.random.normal(
-                loc=self.mean_fillp, scale=self.std_fillp)
-            rand_fill = np.clip(rand_fill, self.min_fill, self.max_fill)
-            rand_fric = np.random.normal(
-                loc=self.mean_friction, scale=self.std_friction)
-            rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
-
-            # set random parameters
-            self.bottle.set_fill_proportion(rand_fill)
-            self.bottle.lat_fric = rand_fric
-
+        for sim_iter in range(len(sim_param_set)):
             # run sim deterministically and average cost and new bottle pos
             cost, bpos, bori, arm_pos = self.run_sim(
-                action, init_joints, bottle_pos, bottle_ori,
-                use_vel_control=False)
+                action=action, sim_params=sim_param_set[sim_iter],
+                init_joints=init_joints, bottle_pos=bottle_pos, bottle_ori=bottle_ori, use_vel_control=False)
             sum_cost += cost
             sum_next_bpos += bpos
 
@@ -158,12 +161,13 @@ class Environment(object):
         most_common_ori = next_bottle_ori_bins[np.argmax(
             next_bottle_ori_counts)]
 
-        return (sum_cost / float(self.num_rand_samples),
-                sum_next_bpos / float(self.num_rand_samples),
+        return (sum_cost / float(len(sim_param_set)),
+                sum_next_bpos / float(len(sim_param_set)),
                 most_common_ori,
-                sum_joint_pos / float(self.num_rand_samples))
+                sum_joint_pos / float(len(sim_param_set)))
 
-    def run_sim_mode(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
+    def run_sim_mode(self, action, sim_param_set, init_joints=None,
+                     bottle_pos=None, bottle_ori=None):
         """
         Similar to run_sim_avg except output cost and next state are chosen as the mode, or most common pair of outcomes. Outputs are discretized into bins.
         """
@@ -180,23 +184,13 @@ class Environment(object):
 
         # map discretized states to their counts and costs
         next_state_bins = dict()
-        for sim_iter in range(self.num_rand_samples):
-            # randomly sample friction and fill-prop of bottle
-            rand_fill = np.random.normal(
-                loc=self.mean_fillp, scale=self.std_fillp)
-            rand_fill = np.clip(rand_fill, self.min_fill, self.max_fill)
-            rand_fric = np.random.normal(
-                loc=self.mean_friction, scale=self.std_friction)
-            rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
-
-            # set random parameters
-            self.bottle.set_fill_proportion(rand_fill)
-            self.bottle.lat_fric = rand_fric
+        for sim_iter in range(len(sim_param_set)):
 
             # run sim deterministically and average cost and new bottle pos
             cost, bpos, bori, arm_pos = self.run_sim(
-                action, init_joints, bottle_pos, bottle_ori,
-                use_vel_control=False)
+                action=action, sim_params=sim_param_set[sim_iter],
+                init_joints=init_joints, bottle_pos=bottle_pos,
+                bottle_ori=bottle_ori, use_vel_control=False)
             ns = np.concatenate([bpos, arm_pos])
 
             # store results
@@ -230,7 +224,9 @@ class Environment(object):
 
         return avg_cost, mode_bpos, mode_bori, mode_arm_pos
 
-    def run_sim(self, action, init_joints=None, bottle_pos=None, bottle_ori=None, use_vel_control=False):
+    def run_sim(self, action: np.ndarray, sim_params: EnvParams,
+                init_joints=None, bottle_pos=None, bottle_ori=None,
+                use_vel_control=False):
         """Deterministic simulation where all parameters are already set and
         known.
 
@@ -266,10 +262,11 @@ class Environment(object):
 
         return self.simulate_plan(init_pose=init_joints,
                                   traj=target_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori,
-                                  use_vel_control=use_vel_control)
+                                  use_vel_control=use_vel_control,
+                                  sim_params=sim_params)
 
     def simulate_plan(self, init_pose, traj, bottle_pos, bottle_ori,
-                      use_vel_control):
+                      use_vel_control, sim_params: EnvParams):
         """Run simulation with given joint-space trajectory. Does not reset arm
         joint angles after simulation is done, so that value can be guaranteed to be untouched.
 
@@ -285,8 +282,10 @@ class Environment(object):
         prev_arm_pos = np.copy(init_arm_pos)
 
         # create new bottle object with parameters set beforehand
+        self.bottle.set_fill_proportion(sim_params.bottle_fill)
+        self.bottle.lat_fric = sim_params.bottle_fric
         if bottle_pos is not None:
-            self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
+            self.bottle.create_sim_bottle(pos=bottle_pos, ori=bottle_ori)
             prev_bottle_pos = bottle_pos
         else:
             self.bottle.create_sim_bottle(ori=bottle_ori)

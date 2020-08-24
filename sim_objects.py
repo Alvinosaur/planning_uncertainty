@@ -2,6 +2,7 @@ import math
 import numpy as np
 import pybullet as p
 from scipy.spatial.transform import Rotation as R
+import sys
 
 PI = math.pi
 TWO_PI = 2 * math.pi
@@ -28,7 +29,7 @@ class Bottle:
         self.max_volume = self.DEFAULT_MAX_VOLUME      # fl-oz
         self.radius = self.DEFAULT_RADIUS    # m
         self.height = self.DEFAULT_HEIGHT     # m
-        self.default_fric = 0.2  # plastic-wood dynamic friction
+        self.default_fric = 0.1  # plastic-wood dynamic friction
         self.lat_fric = self.default_fric
         self.min_fill = 0.3
         self.max_fill = 1.0
@@ -40,10 +41,13 @@ class Bottle:
         self.default_com = np.array([0, 0, self.height / 2])
         self.set_fill_proportion(fill_prop)
 
+        # create visual and collision bottle object
         self.col_id = p.createCollisionShape(
             shapeType=p.GEOM_CYLINDER,
             radius=self.radius,
             height=self.height)
+        self.bottle_id = None  # defined in create_sim_bottle
+        self.create_sim_bottle()
 
     def set_fill_proportion(self, fill_prop):
         self.bottle_mass = self.mass_from_fill(fill_prop)
@@ -66,8 +70,16 @@ class Bottle:
             return np.array([0, 0, water_height * 0.4])
 
     def create_sim_bottle(self, pos=None, ori=None):
+        # delete old bottle if it exists
+        if self.bottle_id is not None:
+            # NOTE: This line complains about error in removing, but pybullet
+            # has some really strange behavior where the 2nd time this is
+            # called without removing body, two duplicate objects show up but
+            # after that objects are deleted without even calling removeBody
+            p.removeBody(self.bottle_id)
+
         if ori is None:
-            ori = [0, 0, 0, 1]
+            ori = self.start_ori
         if pos is not None:
             x, y, z = pos
             pos = [x, y, z + self.PLANE_OFFSET]

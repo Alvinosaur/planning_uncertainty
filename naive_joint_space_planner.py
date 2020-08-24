@@ -78,7 +78,7 @@ class Node(object):
 
 
 class NaivePlanner():
-    def __init__(self, env: Environment, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True, sim_mode=SINGLE):
+    def __init__(self, env: Environment, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True, sim_mode=SINGLE, num_rand_samples=1):
         """[summary]
 
         Args:
@@ -110,16 +110,27 @@ class NaivePlanner():
         # store state g-values and all states(joint space) that are seen
         self.G = dict()
 
+        # random samples of environmental parameters
+        self.num_rand_samples = num_rand_samples
+        self.sim_params_set = []  # populated below
+        self.gen_new_env_params()
+
         # method of simulating an action
+        self.sim_mode = sim_mode
         if sim_mode == SINGLE:
             self.sim_func = self.env.run_sim
+            assert(self.num_rand_samples == 1)
         elif sim_mode == AVG:
             self.sim_func = self.env.run_sim_avg
+            # 1 is ok, can change, but to double-check that we're not using default value
+            assert(self.num_rand_samples > 1)
         elif sim_mode == MODE:
             self.sim_func = self.env.run_sim_mode
+            assert(self.num_rand_samples > 1)
         else:
             print("Invalid sim mode specified: {}, defaulting to SINGLE".format(sim_mode))
             self.sim_func = self.env.run_sim
+            assert(self.num_rand_samples == 1)
 
         # search parameters
         self.dist_thresh = dist_thresh
@@ -137,6 +148,10 @@ class NaivePlanner():
         # self.joint_bounds = (self.env.arm.ul / self.da).astype(int)
         # self.max_joint_indexes = (
         #     (self.env.arm.ul - self.env.arm.ll) / self.A.da_rad).astype(int)
+
+    def gen_new_env_params(self):
+        self.sim_params_set = [self.env.gen_random_env_param()
+                               for i in range(self.num_rand_samples)]
 
     def debug_view_state(self, state):
         joint_pose = self.joint_pose_from_state(state)
@@ -178,8 +193,6 @@ class NaivePlanner():
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
-            print("Expanded: (%s) (%s)" %
-                  (self.state_to_str(state[:3]), self.state_to_str(state[3:] * 180 / math.pi)))
             # print(n)
             # print("Heuristic: %.2f" % self.heuristic(n.state))
             # self.debug_view_state(state)
@@ -192,6 +205,9 @@ class NaivePlanner():
                 # print("avoid re-expanding closed state: %s" % n)
                 continue
             closed_set.add(state_key)
+
+            print("Expanded: (%s) (%s)" %
+                  (self.state_to_str(state[:3]), self.state_to_str(state[3:] * 180 / math.pi)))
 
             # check if found goal, if so loop will terminate in next iteration
             if self.reached_goal(state):
@@ -209,10 +225,19 @@ class NaivePlanner():
                 dq = self.A.get_action(ai)
 
                 # (state, action) -> (cost, next_state)
-                (trans_cost, next_bottle_pos,
-                 next_bottle_ori, next_joint_pose) = self.sim_func(
-                    action=dq, init_joints=cur_joints,
-                    bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+                if self.sim_mode == SINGLE:
+                    # only use one simulation parameter set
+                    (trans_cost, next_bottle_pos,
+                     next_bottle_ori, next_joint_pose) = self.sim_func(
+                        action=dq, init_joints=cur_joints,
+                        bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                        sim_params=self.sim_params_set[0])
+                else:
+                    (trans_cost, next_bottle_pos,
+                     next_bottle_ori, next_joint_pose) = self.sim_func(
+                        action=dq, init_joints=cur_joints,
+                        bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                        sim_params_set=self.sim_params_set)
 
                 # completely ignore actions that knock over bottle
                 if self.is_invalid_transition(trans_cost):
