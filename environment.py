@@ -117,7 +117,7 @@ class Environment(object):
         rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
         return EnvParams(bottle_fill=rand_fill, bottle_fric=rand_fric)
 
-    def run_sim_avg(self, action, sim_param_set, init_joints=None,
+    def run_sim_avg(self, action, sim_params_set, init_joints=None,
                     bottle_pos=None, bottle_ori=None):
         """
         Randomly sample internal(unobservable to agent) bottle parameters for each iteration, and return cost and next state averaged over all iterations. In cases where bottle falls, next state is not included in average next state.
@@ -131,10 +131,10 @@ class Environment(object):
         next_bottle_ori_bins = []
         next_bottle_ori_counts = []
         sum_joint_pos = np.zeros(self.arm.num_DOF)
-        for sim_iter in range(len(sim_param_set)):
+        for sim_iter in range(len(sim_params_set)):
             # run sim deterministically and average cost and new bottle pos
             cost, bpos, bori, arm_pos = self.run_sim(
-                action=action, sim_params=sim_param_set[sim_iter],
+                action=action, sim_params=sim_params_set[sim_iter],
                 init_joints=init_joints, bottle_pos=bottle_pos, bottle_ori=bottle_ori, use_vel_control=False)
             sum_cost += cost
             sum_next_bpos += bpos
@@ -143,6 +143,8 @@ class Environment(object):
             sum_joint_pos += arm_pos
 
             # bin bottle orientation
+            # one-hot vector showing which, if any stored bottle orientations
+            # match current bori
             ori_comparisons = [self.is_quat_equal(
                 bori, q) for q in next_bottle_ori_bins]
             match = np.where(ori_comparisons)[0]
@@ -161,21 +163,23 @@ class Environment(object):
         most_common_ori = next_bottle_ori_bins[np.argmax(
             next_bottle_ori_counts)]
 
-        return (sum_cost / float(len(sim_param_set)),
-                sum_next_bpos / float(len(sim_param_set)),
+        return (sum_cost / float(len(sim_params_set)),
+                sum_next_bpos / float(len(sim_params_set)),
                 most_common_ori,
-                sum_joint_pos / float(len(sim_param_set)))
+                sum_joint_pos / float(len(sim_params_set)))
 
-    def run_sim_mode(self, action, sim_param_set, init_joints=None,
+    def run_sim_mode(self, action, sim_params_set, init_joints=None,
                      bottle_pos=None, bottle_ori=None):
         """
         Similar to run_sim_avg except output cost and next state are chosen as the mode, or most common pair of outcomes. Outputs are discretized into bins.
         """
         class CostCountTuple():
-            def __init__(self, count, cost, bori):
+            def __init__(self, count, cost, bpos, bori, arm_pos):
                 self.count = count
                 self.cost = cost
+                self.bpos = bpos
                 self.bori = bori
+                self.arm_pos = arm_pos
 
             def __repr__(self):
                 return "cost(%.2f), count(%d), bori(%.2f,%.2f,%.2f,%.2f)" % (
@@ -184,11 +188,11 @@ class Environment(object):
 
         # map discretized states to their counts and costs
         next_state_bins = dict()
-        for sim_iter in range(len(sim_param_set)):
+        for sim_iter in range(len(sim_params_set)):
 
             # run sim deterministically and average cost and new bottle pos
             cost, bpos, bori, arm_pos = self.run_sim(
-                action=action, sim_params=sim_param_set[sim_iter],
+                action=action, sim_params=sim_params_set[sim_iter],
                 init_joints=init_joints, bottle_pos=bottle_pos,
                 bottle_ori=bottle_ori, use_vel_control=False)
             ns = np.concatenate([bpos, arm_pos])
@@ -198,12 +202,14 @@ class Environment(object):
             if ns_disc in next_state_bins:
                 next_state_bins[ns_disc].count += 1
                 next_state_bins[ns_disc].cost += cost
+                next_state_bins[ns_disc].bpos += bpos
+                next_state_bins[ns_disc].arm_pos += arm_pos
                 # only store bottle orientation once... not great but averaging
                 # doesn't work well
 
             else:
                 next_state_bins[ns_disc] = CostCountTuple(
-                    count=1, cost=cost, bori=bori)
+                    count=1, cost=cost, bpos=bpos, bori=bori, arm_pos=arm_pos)
 
             # extra optimization: if arm didn't touch bottle, no need for more iterations
             # not comparing z-value because bottle will drop a bit due to ground plane offset
@@ -211,16 +217,15 @@ class Environment(object):
                 break
 
         # most common next state bin
-        mode_ns_disc = max(next_state_bins.keys(),
-                           key=lambda ns_disc: next_state_bins[ns_disc].count)
-        mode_ns_cont = np.array(mode_ns_disc) * self.state_disc
-        mode_bpos = mode_ns_cont[:3]
-        mode_arm_pos = mode_ns_cont[3:]
+        mode_next_state_data = max(next_state_bins.values(),
+                                   key=lambda data: data.count)
+        count = float(mode_next_state_data.count)
+        mode_bpos = mode_next_state_data.bpos / count
+        mode_arm_pos = mode_next_state_data.arm_pos / count
 
-        count = float(next_state_bins[mode_ns_disc].count)
         # don't divide by count since not average
-        mode_bori = next_state_bins[mode_ns_disc].bori
-        avg_cost = (next_state_bins[mode_ns_disc].cost / count)
+        mode_bori = mode_next_state_data.bori
+        avg_cost = mode_next_state_data.cost / count
 
         return avg_cost, mode_bpos, mode_bori, mode_arm_pos
 

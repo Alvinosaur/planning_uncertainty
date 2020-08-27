@@ -167,14 +167,16 @@ def simulate_planner_random_env(env: Environment, planner: NaivePlanner,
                 if metrics.initial_plan_time == 0:
                     metrics.initial_plan_time = untracked_plan_time
 
-        success_count += metrics.is_success
-        fall_count += metrics.is_fallen
         failed_plan_count += (not metrics.found_plan)
-        if not metrics.found_plan:
+        if metrics.found_plan:
+            success_count += metrics.is_success
+            fall_count += metrics.is_fallen
+            replan_count += metrics.num_replan_attempts
+            total_initial_plan_time += metrics.initial_plan_time
+            total_plan_time += metrics.total_plan_time
+
+        else:
             print("Planning failed!")
-        replan_count += metrics.num_replan_attempts
-        total_initial_plan_time += metrics.initial_plan_time
-        total_plan_time += metrics.total_plan_time
 
     # combine all metrics
     fail_plan_rate = failed_plan_count / float(iters)
@@ -198,6 +200,7 @@ def simulate_planner_random_env(env: Environment, planner: NaivePlanner,
 
 
 def direct_plan_execution(start, goal, planner: NaivePlanner, env: Environment,
+                          exec_params: EnvParams,
                           replay_saved=False, visualize=False, sim_mode=SINGLE,
                           replay_random=False):
     if sim_mode == SINGLE:
@@ -245,8 +248,8 @@ def direct_plan_execution(start, goal, planner: NaivePlanner, env: Environment,
             # maintained by simulator
             # print(bottle_pos)
             # print(bottle_ori)
-            trans_cost, bottle_pos, bottle_ori, _ = planner.sim_func(
-                action=dq, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+            trans_cost, bottle_pos, bottle_ori, _ = env.run_sim(
+                action=dq, bottle_pos=bottle_pos, bottle_ori=bottle_ori, sim_params=exec_params)
             print("Action: %s" % planner.state_to_str(dq * 180 / math.pi))
             print("Pos: %.2f,%.2f" %
                   tuple(bottle_pos[:2]))
@@ -264,7 +267,7 @@ def main():
     VISUALIZE = False
     REPLAY_RESULTS = False
     SAVE_STDOUT_TO_FILE = True
-    sim_mode = SINGLE
+    sim_mode = AVG
     replay_random = False  # replay with  random bottle parameters chosen
     LOGGING = False
     GRAVITY = -9.81
@@ -386,22 +389,25 @@ def main():
     mode_planner.sim_params_set = avg_planner.sim_params_set
 
     max_time_s = 10
-    planners = [single_planner]  # , avg_planner, mode_planner]
+    # planners = [single_planner, avg_planner, mode_planner]
+    planners = [avg_planner]
     names = ["single", "avg", "mode"]
-    for pi, planner in enumerate(planners):
-        name = names[pi]
-        if SAVE_STDOUT_TO_FILE:
-            sys.stdout = open('%s_planner_output.txt' % name, 'w')
-        simulate_planner_random_env(env=env, planner=planner,
-                                    start=start, goal=goal,
-                                    exec_params_set=exec_params_set,
-                                    plan_params_set_per_iter=plan_params_set_per_iter,
-                                    iters=num_iters, max_time_s=max_time_s)
-    # start_plan_time = time.time()
-    # direct_plan_execution(start, goal, planner, env,
-    #                       replay_saved=REPLAY_RESULTS, visualize=VISUALIZE, sim_mode=sim_mode, replay_random=replay_random)
-    # end_time = time.time()
-    # print("Time taken: %.2f" % (end_time - start_plan_time))
+    # for pi, planner in enumerate(planners):
+    #     name = names[pi]
+    #     if SAVE_STDOUT_TO_FILE:
+    #         sys.stdout = open('%s_planner_output.txt' % name, 'w')
+    #     simulate_planner_random_env(env=env, planner=planner,
+    #                                 start=start, goal=goal,
+    #                                 exec_params_set=exec_params_set,
+    #                                 plan_params_set_per_iter=plan_params_set_per_iter,
+    #                                 iters=num_iters, max_time_s=max_time_s)
+    start_plan_time = time.time()
+    exec_params = exec_params_set[0]
+    direct_plan_execution(start, goal, avg_planner, env,
+                          exec_params=exec_params,
+                          replay_saved=REPLAY_RESULTS, visualize=VISUALIZE, sim_mode=sim_mode, replay_random=replay_random)
+    end_time = time.time()
+    print("Time taken: %.2f" % (end_time - start_plan_time))
     # s1 = np.array([-0.50, -0.50, 0.04, 0.00, 0.00, -0.00, 1.00,
     #                0.51, 2.09, -0.11, 0.45, -0.14, 2.08, -0.91])
     # s2 = np.array([-0.50, -0.50, 0.04, -0.00, 0.00, -0.00, 1.00,
