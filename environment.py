@@ -6,6 +6,7 @@ from datetime import datetime
 import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
+import scipy.stats
 import matplotlib.pyplot as plt
 
 from sim_objects import Arm, Bottle
@@ -44,9 +45,12 @@ class ActionSpace():
 
 
 class EnvParams(object):
-    def __init__(self, bottle_fill, bottle_fric):
+    def __init__(self, bottle_fill, bottle_fric, bottle_fill_prob,
+                 bottle_fric_prob):
         self.bottle_fill = bottle_fill
         self.bottle_fric = bottle_fric
+        self.bottle_fill_prob = bottle_fill_prob
+        self.bottle_fric_prob = bottle_fric_prob
 
 
 class Environment(object):
@@ -87,147 +91,67 @@ class Environment(object):
         self.use_3D = use_3D
 
         # Normal distribution of internal bottle params
+        # normal distrib for bottle friction
         self.min_fric = 0.05
         self.max_fric = 0.2
-        self.min_fill = self.bottle.min_fill
-        self.max_fill = 1.0
         self.mean_friction = (self.min_fric + self.max_fric) / 2.
         # want min and max to be at 3 std deviations
         self.std_friction = (self.max_fric - self.mean_friction) / 3.
+        # NOTE: DO NOT USE KWARGS for scipy norm, use ARGS
+        # since scipy uses "loc" for mean and "scale" for stddev, avoid passing
+        # in wrong kwargs and having them ignored
+        self.fric_distrib = scipy.stats.norm(
+            self.mean_friction, self.std_friction)
+
+        # normal distrib for bottle fill proportion
+        self.min_fill = self.bottle.min_fill
+        self.max_fill = 1.0
         self.mean_fillp = (self.min_fill + self.max_fill) / 2.
         self.std_fillp = (self.max_fill - self.mean_fillp) / 3.
-
-    def eval_cost(self, is_fallen, bottle_pos, ee_move_dist):
-        # dist = np.linalg.norm(self.target_bottle_pos[:2] - bottle_pos[:2])
-        # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
-
-        # any step incurs penalty of 1, but if falls, extra huge penalty
-        return max(ee_move_dist, self.FALL_COST * is_fallen)
+        self.fillp_distrib = scipy.stats.norm(
+            self.mean_fillp, self.std_fillp)
 
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
 
-    def gen_random_env_param(self):
-        # randomly sample friction and fill-prop of bottle
-        rand_fill = np.random.normal(
-            loc=self.mean_fillp, scale=self.std_fillp)
-        rand_fill = np.clip(rand_fill, self.min_fill, self.max_fill)
-        rand_fric = np.random.normal(
-            loc=self.mean_friction, scale=self.std_friction)
-        rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
-        return EnvParams(bottle_fill=rand_fill, bottle_fric=rand_fric)
+    def gen_random_env_param_set(self, num=1):
+        rand_fills, rand_fill_probs = self.get_random_sample_prob(
+            distrib=self.fillp_distrib, minv=self.min_fill, maxv=self.max_fill, num=num)
+        rand_frics, rand_fric_probs = self.get_random_sample_prob(
+            distrib=self.fric_distrib, minv=self.min_fric, maxv=self.max_fric, num=num)
 
-    def run_sim_avg(self, action, sim_params_set, init_joints=None,
-                    bottle_pos=None, bottle_ori=None):
+        param_set = []
+        for i in range(num):
+            param = EnvParams(bottle_fill=rand_fills[i],
+                              bottle_fric=rand_frics[i],
+                              bottle_fill_prob=rand_fill_probs[i],
+                              bottle_fric_prob=rand_fric_probs[i])
+            param_set.append(param)
+        return param_set
+
+    def run_multiple_sims(self, action, sim_params_set, init_joints=None,
+                          bottle_pos=None, bottle_ori=None):
         """
-        Randomly sample internal(unobservable to agent) bottle parameters for each iteration, and return cost and next state averaged over all iterations. In cases where bottle falls, next state is not included in average next state.
-
-        NOTE: this is still not stochastic because we overall are using some finalized cost and next state to represent successor of a (state, action) pair. In a true stochastic planner, successors are represented
-        by a belief space, or distribution of possible next states, each with
-        some probability.
+        Simply run multiple simulations with different environmental parameters.
+        Return a list of all results, each entry as a tuple. Let the planner do
+        post-processing of these results.
         """
-        sum_cost = 0
-        sum_next_bpos = np.zeros(3)
-        next_bottle_ori_bins = []
-        next_bottle_ori_counts = []
-        sum_joint_pos = np.zeros(self.arm.num_DOF)
-        for sim_iter in range(len(sim_params_set)):
-            # run sim deterministically and average cost and new bottle pos
-            cost, bpos, bori, arm_pos = self.run_sim(
-                action=action, sim_params=sim_params_set[sim_iter],
-                init_joints=init_joints, bottle_pos=bottle_pos, bottle_ori=bottle_ori, use_vel_control=False)
-            sum_cost += cost
-            sum_next_bpos += bpos
+        all_results = []
+        for sim_params in sim_params_set:
+            results = self.run_sim(action=action,
+                                   sim_params=sim_params,
+                                   init_joints=init_joints,
+                                   bottle_pos=np.copy(bottle_pos),
+                                   bottle_ori=bottle_ori)
+            all_results.append(results)
 
-            # averaging angles  directly like this isn't safe, but assume that  arm will reach its target  orientation the same regardless of bottle parameters
-            sum_joint_pos += arm_pos
-
-            # bin bottle orientation
-            # one-hot vector showing which, if any stored bottle orientations
-            # match current bori
-            ori_comparisons = [self.is_quat_equal(
-                bori, q) for q in next_bottle_ori_bins]
-            match = np.where(ori_comparisons)[0]
-            if len(match) == 1:
-                match_i = match[0]
-                next_bottle_ori_counts[match_i] += 1
-
-            else:
-                next_bottle_ori_bins.append(bori)
-                next_bottle_ori_counts.append(1)
-
-            # extra optimization: if arm didn't touch bottle, no need for more iterations
-            if np.allclose(bpos, bottle_pos, atol=1e-5):
+            # extra optimization: if arm didn't touch bottle, no need for more
+            # iterations
+            (_, is_collision, new_bottle_pos, _, _) = results
+            if not is_collision:
                 break
 
-        most_common_ori = next_bottle_ori_bins[np.argmax(
-            next_bottle_ori_counts)]
-
-        return (sum_cost / float(len(sim_params_set)),
-                sum_next_bpos / float(len(sim_params_set)),
-                most_common_ori,
-                sum_joint_pos / float(len(sim_params_set)))
-
-    def run_sim_mode(self, action, sim_params_set, init_joints=None,
-                     bottle_pos=None, bottle_ori=None):
-        """
-        Similar to run_sim_avg except output cost and next state are chosen as the mode, or most common pair of outcomes. Outputs are discretized into bins.
-        """
-        class CostCountTuple():
-            def __init__(self, count, cost, bpos, bori, arm_pos):
-                self.count = count
-                self.cost = cost
-                self.bpos = bpos
-                self.bori = bori
-                self.arm_pos = arm_pos
-
-            def __repr__(self):
-                return "cost(%.2f), count(%d), bori(%.2f,%.2f,%.2f,%.2f)" % (
-                    self.cost, self.count, self.bori[0], self.bori[1],
-                    self.bori[2], self.bori[3])
-
-        # map discretized states to their counts and costs
-        next_state_bins = dict()
-        for sim_iter in range(len(sim_params_set)):
-
-            # run sim deterministically and average cost and new bottle pos
-            cost, bpos, bori, arm_pos = self.run_sim(
-                action=action, sim_params=sim_params_set[sim_iter],
-                init_joints=init_joints, bottle_pos=bottle_pos,
-                bottle_ori=bottle_ori, use_vel_control=False)
-            ns = np.concatenate([bpos, arm_pos])
-
-            # store results
-            ns_disc = tuple((ns / self.state_disc).astype(int))
-            if ns_disc in next_state_bins:
-                next_state_bins[ns_disc].count += 1
-                next_state_bins[ns_disc].cost += cost
-                next_state_bins[ns_disc].bpos += bpos
-                next_state_bins[ns_disc].arm_pos += arm_pos
-                # only store bottle orientation once... not great but averaging
-                # doesn't work well
-
-            else:
-                next_state_bins[ns_disc] = CostCountTuple(
-                    count=1, cost=cost, bpos=bpos, bori=bori, arm_pos=arm_pos)
-
-            # extra optimization: if arm didn't touch bottle, no need for more iterations
-            # not comparing z-value because bottle will drop a bit due to ground plane offset
-            if np.allclose(bpos[:2], bottle_pos[:2], atol=1e-2):
-                break
-
-        # most common next state bin
-        mode_next_state_data = max(next_state_bins.values(),
-                                   key=lambda data: data.count)
-        count = float(mode_next_state_data.count)
-        mode_bpos = mode_next_state_data.bpos / count
-        mode_arm_pos = mode_next_state_data.arm_pos / count
-
-        # don't divide by count since not average
-        mode_bori = mode_next_state_data.bori
-        avg_cost = mode_next_state_data.cost / count
-
-        return avg_cost, mode_bpos, mode_bori, mode_arm_pos
+        return all_results
 
     def run_sim(self, action: np.ndarray, sim_params: EnvParams,
                 init_joints=None, bottle_pos=None, bottle_ori=None,
@@ -298,6 +222,7 @@ class Environment(object):
         bottle_vert_stopped = False
         bottle_horiz_stopped = False
         bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped
+        is_collision = False
 
         iter = 0
         traj_len = traj.shape[0]
@@ -323,6 +248,9 @@ class Environment(object):
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
+            contacts = p.getContactPoints(
+                self.arm.kukaId, self.bottle.bottle_id)
+            is_collision |= (len(contacts) > 0)
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
@@ -358,38 +286,42 @@ class Environment(object):
         final_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
 
-        # euclidean distance moved by arm is transition cost
-        if self.use_3D:
-            EE_move_dist = np.linalg.norm(final_arm_pos[:3] - init_arm_pos[:3])
-        else:
-            EE_move_dist = np.linalg.norm(final_arm_pos[:2] - init_arm_pos[:2])
-        cost = self.eval_cost(is_fallen, bottle_pos, EE_move_dist)
-
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return cost, bottle_pos, bottle_ori, self.arm.joint_pose
-
-    @ staticmethod
-    def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
-        p.addUserDebugLine(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime)
+        return (is_fallen,
+                is_collision,
+                bottle_pos,
+                bottle_ori,
+                self.arm.joint_pose)
 
     @staticmethod
-    def is_quat_equal(q1, q2, eps=0.005):
-        """Eps was determined empirically with several basic tests. Degree tolerance is ~10 degrees.
+    def get_random_sample_prob(distrib, minv, maxv, num=1):
+        """get N random samples and their "probability"
 
         Args:
-            q1 (np.ndarray): [description]
-            q2 (np.ndarray): [description]
-            eps (float, optional): [description]. Defaults to 0.005.
+            distrib (scipy.stats.distributions.rv_frozen object): [description]
+            min ([type]): [description]
+            max ([type]): [description]
+            num (int, optional): [description]. Defaults to 1.
 
         Returns:
             [type]: [description]
         """
-        if not isinstance(q1, np.ndarray):
-            q1 = np.array(q1)
-            q2 = np.array(q2)
-        return abs(q1 @ q2) > 1 - eps
+        rand_vars = distrib.rvs(size=num)
+        rand_vars = np.clip(rand_vars, minv, maxv)
+        probs = []
+        for v in rand_vars:
+            if v < distrib.mean():
+                p = distrib.cdf(v)
+            else:
+                p = 1 - distrib.cdf(v)
+            probs.append(p)
+        return rand_vars, probs
+
+    @ staticmethod
+    def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
+        p.addUserDebugLine(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime)
 
     @ staticmethod
     def avg_quaternion(quaternions):

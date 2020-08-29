@@ -117,7 +117,7 @@ class Bottle:
 
 
 class Arm:
-    def __init__(self, EE_start_pos, start_ori, kukaId, max_force=250):
+    def __init__(self, EE_start_pos, start_ori, kukaId, max_force=350):
         self.EE_start_pos = EE_start_pos
         self.start_ori = start_ori
         self.kukaId = kukaId

@@ -200,7 +200,7 @@ def simulate_planner_random_env(env: Environment, planner: NaivePlanner,
 
 
 def direct_plan_execution(start, goal, planner: NaivePlanner, env: Environment,
-                          exec_params: EnvParams,
+                          exec_params=None,
                           replay_saved=False, visualize=False, sim_mode=SINGLE,
                           replay_random=False):
     if sim_mode == SINGLE:
@@ -219,6 +219,9 @@ def direct_plan_execution(start, goal, planner: NaivePlanner, env: Environment,
         policy = results["policy"]
         print(len(policy))
         state_path = results["state_path"]
+
+    if exec_params is None:
+        exec_params = planner.sim_params_set[0]
 
     # set random bottle parameters
     if replay_random:
@@ -266,8 +269,8 @@ def direct_plan_execution(start, goal, planner: NaivePlanner, env: Environment,
 def main():
     VISUALIZE = False
     REPLAY_RESULTS = False
-    SAVE_STDOUT_TO_FILE = True
-    sim_mode = AVG
+    SAVE_STDOUT_TO_FILE = False
+    sim_mode = SINGLE
     replay_random = False  # replay with  random bottle parameters chosen
     LOGGING = False
     GRAVITY = -9.81
@@ -338,36 +341,17 @@ def main():
     # randomly sampled environment parameters to test robustness of plans
     # each type of planning will use same randomly generated test params
     num_iters = 10
-    exec_params_set = []
-    for i in range(num_iters):
-        # randomly sample environment parameters
-        rand_fill = np.random.normal(
-            loc=env.mean_fillp, scale=env.std_fillp)
-        rand_fill = np.clip(rand_fill, env.min_fill, env.max_fill)
-        rand_fric = np.random.normal(
-            loc=env.mean_friction, scale=env.std_friction)
-        rand_fric = np.clip(rand_fric, env.min_fric, env.max_fric)
-        sim_params = EnvParams(rand_fill, rand_fric)
-        exec_params_set.append(sim_params)
+    exec_params_set = env.gen_random_env_param_set(num=num_iters)
 
     # for each iteration, have a list[list[sim_params]] so each iteration
     # planner has a new set of planning params so the planner doesn't fail every
     # single time with the same set of planning params
-    num_rand_samples = 10
+    # planner normally has its own auto-generated set, but this is for
+    # explicitly comparing performance of different plannners
+    num_rand_samples = 2
     plan_params_set_per_iter = []
     for i in range(num_iters):
-        new_set = []
-        for j in range(num_rand_samples):
-            # randomly sample environment parameters
-            rand_fill = np.random.normal(
-                loc=env.mean_fillp, scale=env.std_fillp)
-            rand_fill = np.clip(rand_fill, env.min_fill, env.max_fill)
-            rand_fric = np.random.normal(
-                loc=env.mean_friction, scale=env.std_friction)
-            rand_fric = np.clip(rand_fric, env.min_fric, env.max_fric)
-            sim_params = EnvParams(rand_fill, rand_fric)
-            new_set.append(sim_params)
-
+        new_set = env.gen_random_env_param_set(num=num_rand_samples)
         plan_params_set_per_iter.append(new_set)
 
     # Create the three types of planners
@@ -388,10 +372,10 @@ def main():
     # reduce number of independent variables in experiment
     mode_planner.sim_params_set = avg_planner.sim_params_set
 
-    max_time_s = 10
+    max_time_s = 30
     # planners = [single_planner, avg_planner, mode_planner]
-    planners = [avg_planner]
-    names = ["single", "avg", "mode"]
+    # planners = [avg_planner]
+    # names = ["avg", "avg", "mode"]
     # for pi, planner in enumerate(planners):
     #     name = names[pi]
     #     if SAVE_STDOUT_TO_FILE:
@@ -403,11 +387,11 @@ def main():
     #                                 iters=num_iters, max_time_s=max_time_s)
     start_plan_time = time.time()
     exec_params = exec_params_set[0]
-    direct_plan_execution(start, goal, avg_planner, env,
-                          exec_params=exec_params,
+    direct_plan_execution(start, goal, single_planner, env,
+                          #   exec_params=exec_params,
                           replay_saved=REPLAY_RESULTS, visualize=VISUALIZE, sim_mode=sim_mode, replay_random=replay_random)
     end_time = time.time()
-    print("Time taken: %.2f" % (end_time - start_plan_time))
+    # print("Time taken: %.2f" % (end_time - start_plan_time))
     # s1 = np.array([-0.50, -0.50, 0.04, 0.00, 0.00, -0.00, 1.00,
     #                0.51, 2.09, -0.11, 0.45, -0.14, 2.08, -0.91])
     # s2 = np.array([-0.50, -0.50, 0.04, -0.00, 0.00, -0.00, 1.00,
