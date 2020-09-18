@@ -3,6 +3,7 @@ import numpy as np
 import pybullet as p
 from scipy.spatial.transform import Rotation as R
 import sys
+import os
 
 PI = math.pi
 TWO_PI = 2 * math.pi
@@ -21,7 +22,7 @@ class Bottle:
     INIT_PLANE_OFFSET = 0.03805010362200368  # found experimentally
     # PLANE_OFFSET = 0
 
-    def __init__(self, start_pos, start_ori, fill_prop=0.5):
+    def __init__(self, start_pos, start_ori, fill_prop=0.5, mesh_scale=[1, 1, 1]):
         self.start_pos = start_pos
         self.start_ori = start_ori
         self.col_id = None
@@ -42,10 +43,17 @@ class Bottle:
         self.set_fill_proportion(fill_prop)
 
         # create visual and collision bottle object
-        self.col_id = p.createCollisionShape(
-            shapeType=p.GEOM_CYLINDER,
-            radius=self.radius,
-            height=self.height)
+        # self.col_id = p.createCollisionShape(
+        #     shapeType=p.GEOM_CYLINDER,
+        #     radius=self.radius,
+        #     height=self.height)
+
+        self.mesh_scale = mesh_scale
+        self.folder = "objects"
+        self.col_id = p.createCollisionShape(shapeType=p.GEOM_MESH,
+                                             fileName=os.path.join(
+                                                 self.folder, "cup.obj"),
+                                             meshScale=mesh_scale)
         self.bottle_id = None  # defined in create_sim_bottle
         self.create_sim_bottle()
 
@@ -68,6 +76,10 @@ class Bottle:
             return np.array([0, 0, self.height * 0.4])
         else:
             return np.array([0, 0, water_height * 0.4])
+
+    def delete_sim_bottle(self):
+        if self.bottle_id is not None:
+            p.removeBody(self.bottle_id)
 
     def create_sim_bottle(self, pos=None, ori=None):
         # delete old bottle if it exists

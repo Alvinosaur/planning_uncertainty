@@ -5,6 +5,7 @@ import math
 from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
+import copy
 # import pandas as pd
 # import seaborn as sn
 import heapq
@@ -33,8 +34,8 @@ Pseudocode:
 thresh = 1e-1
 A = [set of all incremental joint angle changes]
 transitions = dict()
-start = [x,y,q1,q2,....q6]
-goal = [x,y,q1,q2,....q6]
+start = [x,y,q1,q2,....q6, t=0]
+goal = [x,y,q1,q2,....q6, t=0]  # time unused for goal
 open_set = [(cost, state),...] as minHeap
 goal_expanded = False  #  only true when goal bottle (x,y) expanded
 while !goal_expanded
@@ -78,7 +79,11 @@ class Node(object):
 
 
 class NaivePlanner():
-    def __init__(self, env: Environment, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, use_3D=True, sim_mode=SINGLE, num_rand_samples=1, fall_proportion_thresh=0.5):
+    def __init__(self, env: Environment, xbounds, ybounds, dist_thresh=1e-1,
+                 eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0,
+                 use_3D=True, sim_mode=SINGLE, num_rand_samples=1,
+                 fall_proportion_thresh=0.5,
+                 use_vel_control=False):
         """[summary]
 
         Args:
@@ -96,7 +101,7 @@ class NaivePlanner():
             num_rand_samples (int, optional): [description]. Defaults to 1.
             fall_proportion_thresh (float, optional): [description]. Defaults to 0.5.
         """
-        # state = [x,y,z,q1,q2...,q7]
+        # state = [x,y,z,q1,q2...,q7, t]
         self.env = env
         self.xbounds = np.array(xbounds)  # [minx, maxx]
         self.ybounds = np.array(ybounds)  # [miny, maxy]
@@ -106,7 +111,11 @@ class NaivePlanner():
         # define action space
         self.da = da_rad
         self.num_joints = env.arm.num_joints
-        self.A = ActionSpace(num_DOF=self.num_joints, da_rad=self.da)
+        # NOTE: last joint doesn't contribute to motion of arm since no gripper
+        # at end, so just ignore it for set of actions
+        self.A = ActionSpace(num_DOF=self.num_joints,
+                             da_rad=self.da, ignore_last_joint=True)
+        self.use_vel_control = use_vel_control
 
         # store state g-values and all states(joint space) that are seen
         self.G = dict()
@@ -160,6 +169,11 @@ class NaivePlanner():
             (self.ybounds - self.ybounds[0]) / self.dy).astype(int)
         self.TWO_PI_i = 2 * math.pi / self.da
 
+    def change_param_set(self, new_param_set):
+        self.sim_params_set = copy.deepcopy(new_param_set)
+        self.param_probs = [(p.bottle_fill_prob * p.bottle_fric_prob)
+                            for p in self.sim_params_set]
+
     def debug_view_state(self, state):
         joint_pose = self.joint_pose_from_state(state)
         bx, by, _ = self.bottle_pos_from_state(state)
@@ -205,25 +219,31 @@ class NaivePlanner():
             avg_fall_prob += is_fallen * self.param_probs[i]
             fall_prob_norm += self.param_probs[i]
 
-            # avg next bottle position is simple average
-            sum_next_bpos += bpos
+            # avg next bottle position is simple average, ignores fallen ones
+            if not is_fallen:
+                sum_next_bpos += bpos
 
-            # bin bottle orientation
-            # one-hot vector showing which, if any stored bottle orientations
-            # match current bori
-            ori_comparisons = [self.is_quat_equal(bori, q)
-                               for q in next_bottle_ori_bins]
-            match = np.where(ori_comparisons)[0]
-            if len(match) == 1:
-                match_i = match[0]
-                next_bottle_ori_counts[match_i] += 1
-            else:
-                next_bottle_ori_bins.append(bori)
-                next_bottle_ori_counts.append(1)
+                # bin bottle orientation
+                # one-hot vector showing which, if any stored bottle orientations
+                # match current bori
+                ori_comparisons = [self.is_quat_equal(bori, q)
+                                   for q in next_bottle_ori_bins]
+                match = np.where(ori_comparisons)[0]
+                if len(match) == 1:
+                    match_i = match[0]
+                    next_bottle_ori_counts[match_i] += 1
+                else:
+                    next_bottle_ori_bins.append(bori)
+                    next_bottle_ori_counts.append(1)
 
         # Determine average next state
-        most_common_ori = next_bottle_ori_bins[np.argmax(
-            next_bottle_ori_counts)]
+        try:
+            most_common_ori = next_bottle_ori_bins[np.argmax(
+                next_bottle_ori_counts)]
+        # all were failures, so just set to None since will be marked all
+        # invalid  transition anyways
+        except ValueError:
+            most_common_ori = None
         avg_next_bpos = sum_next_bpos / float(num_iters)
 
         # normalize by sum of weights (not all but only up to num_iters)
@@ -257,6 +277,9 @@ class NaivePlanner():
         num_iters = len(results)
         for i in range(num_iters):
             is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
+            bpos = np.array(bpos)
+            bori = np.array(bori)
+            next_joint_pos = np.array(next_joint_pos)
 
             # weighted sum of fall counts: sum(pi*xi) / sum(pi)
             avg_fall_prob += is_fallen * self.param_probs[i]
@@ -328,8 +351,8 @@ class NaivePlanner():
                 continue
             closed_set.add(state_key)
 
-            print("Expanded: (%s) (%s)" %
-                  (self.state_to_str(state[:3]), self.state_to_str(state[3:] * 180 / math.pi)))
+            print("Expanded: (%s) (%s) (%d)" %
+                  (self.state_to_str(state[:3]), self.state_to_str(state[3:3 + self.num_joints] * 180 / math.pi), state[-1]))
 
             # check if found goal, if so loop will terminate in next iteration
             if self.reached_goal(state):
@@ -344,23 +367,25 @@ class NaivePlanner():
             # explore all actions from this state
             for ai in self.A.action_ids:
                 # action defined as an offset of joint angles of arm
-                dq = self.A.get_action(ai)
+                action = self.A.get_action(ai)
 
                 # (state, action) -> (cost, next_state)
                 if self.sim_mode == SINGLE:
                     # only use one simulation parameter set
                     (is_fallen, _, next_bottle_pos,
                      next_bottle_ori, next_joint_pose) = self.sim_func(
-                        action=dq, init_joints=cur_joints,
+                        action=action, init_joints=cur_joints,
                         bottle_pos=bottle_pos, bottle_ori=bottle_ori,
-                        sim_params=self.sim_params_set[0])
+                        sim_params=self.sim_params_set[0],
+                        use_vel_control=self.use_vel_control)
                     invalid = is_fallen
 
                 else:
                     results = self.sim_func(
-                        action=dq, init_joints=cur_joints,
+                        action=action, init_joints=cur_joints,
                         bottle_pos=bottle_pos, bottle_ori=bottle_ori,
-                        sim_params_set=self.sim_params_set)
+                        sim_params_set=self.sim_params_set,
+                        use_vel_control=self.use_vel_control)
 
                     (invalid, next_bottle_pos,
                      next_bottle_ori, next_joint_pose) = (
@@ -377,17 +402,21 @@ class NaivePlanner():
                 self.env.arm.reset(next_joint_pose)
                 next_EE_pos = self.env.arm.get_joint_positions()[-1]
 
-                print("(%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)" %
-                      tuple(np.concatenate([cur_EE_pos, next_EE_pos])))
+                # print("(%.2f, %.2f, %.2f) -> (%.2f, %.2f, %.2f)" %
+                #       tuple(np.concatenate([cur_EE_pos, next_EE_pos])))
 
-                next_state = np.concatenate([next_bottle_pos, next_joint_pose])
+                num_iters = action[1]
+                new_time = self.time_from_state(state) + num_iters
+                next_state = np.concatenate(
+                    [next_bottle_pos, next_joint_pose, [new_time]])
                 next_state_key = self.state_to_key(next_state)
                 if next_state_key in closed_set:  # if already expanded, skip
                     continue
 
-                f = self.heuristic(next_state)
+                f = self.heuristic(next_state, next_bottle_ori)
                 trans_cost = self.calc_trans_cost(cur_joints, next_joint_pose)
                 new_G = cur_cost + trans_cost
+                # print("f: %.2f, s: %s" % (f, self.state_to_str(next_state)))
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
@@ -510,11 +539,16 @@ class NaivePlanner():
                     min_i = i
             return math.sqrt(min_sq_dist)
 
-    def heuristic(self, state):
+    def heuristic(self, state, bottle_ori):
         dist_to_goal = self.dist_bottle_to_goal(state)
 
         dist_arm_to_bottle = self.dist_arm_to_bottle(state)
-        return dist_to_goal + dist_arm_to_bottle
+        z_axis = np.array([0, 0, 1])
+        bottle_z_axis = z_axis @ Quaternion(bottle_ori).rotation_matrix
+        bottle_z_axis /= np.linalg.norm(bottle_z_axis)
+        ang = abs(math.acos(z_axis @ bottle_z_axis))
+        ang_weight = 0.3
+        return dist_to_goal + dist_arm_to_bottle + ang_weight * ang
 
     def reached_goal(self, state):
         dist_to_goal = self.dist_bottle_to_goal(state)
@@ -528,14 +562,15 @@ class NaivePlanner():
         joints = self.joint_pose_from_state(state)
         joints_i = np.rint(joints / self.da) % self.TWO_PI_i
         # tuple of ints as unique id
-        return (tuple(pos_i), tuple(joints_i))
+        return (tuple(pos_i) + tuple(joints_i) +
+                (self.time_from_state(state),))
 
     def key_to_state(self, key):
-        (pos_i, joints_i) = key
-        joints_i = np.array(joints_i)
-        pos = np.array(pos_i) * self.dpos
+        pos = np.array(key[:3]) * self.dpos
+        joints_i = np.array(key[3:3 + self.num_joints])
         joints = (joints_i * self.da) + self.env.arm.ul
-        return np.concatenate([pos, joints])
+        t = [key[-1]]
+        return np.concatenate([pos, joints, t])
 
     @ staticmethod
     def state_to_str(state):
@@ -552,9 +587,12 @@ class NaivePlanner():
     def bottle_pos_from_state(state):
         return state[:3]
 
-    @ staticmethod
-    def joint_pose_from_state(state):
-        return state[3:]
+    def joint_pose_from_state(self, state):
+        return state[3: 3 + self.num_joints]
+
+    @staticmethod
+    def time_from_state(state):
+        return int(state[-1])
 
     @staticmethod
     def is_quat_equal(q1, q2, eps=0.005):

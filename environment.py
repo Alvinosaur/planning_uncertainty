@@ -19,13 +19,19 @@ class ActionSpace():
     """
     default_da_rad = 5.0 * math.pi / 180.0  # default 5 degrees offsets
 
-    def __init__(self, num_DOF, da_rad=default_da_rad, include_no_change=False):
+    def __init__(self, num_DOF, da_rad=default_da_rad, include_no_change=False,
+                 ignore_last_joint=True):
         self.num_DOF = num_DOF
         self.da_rad = da_rad
+        self.traj_iter_set = [100, 150, 200]
 
         pos_moves = np.eye(N=num_DOF) * da_rad
         neg_moves = np.eye(N=num_DOF) * -da_rad
         no_change = np.zeros((1, num_DOF))
+
+        if ignore_last_joint:
+            pos_moves = pos_moves[:-1, :]
+            neg_moves = neg_moves[:-1, :]
 
         if include_no_change:
             self.actions_mat = np.vstack([
@@ -35,13 +41,15 @@ class ActionSpace():
             self.actions_mat = np.vstack([
                 pos_moves, neg_moves
             ])
-        self.num_actions = self.actions_mat.shape[0]
+        self.num_actions = self.actions_mat.shape[0] * len(self.traj_iter_set)
         self.action_ids = list(range(self.num_actions))
 
     def get_action(self, id):
         assert(isinstance(id, int))
-        assert(0 <= id < self.num_actions)
-        return self.actions_mat[id, :]
+        assert (0 <= id < self.num_actions)
+        dq_i = id % self.actions_mat.shape[0]
+        num_iters = self.traj_iter_set[int(id / self.actions_mat.shape[0])]
+        return (self.actions_mat[dq_i, :], num_iters)
 
 
 class EnvParams(object):
@@ -51,6 +59,10 @@ class EnvParams(object):
         self.bottle_fric = bottle_fric
         self.bottle_fill_prob = bottle_fill_prob
         self.bottle_fric_prob = bottle_fric_prob
+
+    def __repr__(self):
+        return "fill, fric, pfill, pfric: %.2f, %.2f, %.2f, %.2f" % (
+            self.bottle_fill, self.bottle_fric, self.bottle_fill_prob, self.bottle_fric_prob)
 
 
 class Environment(object):
@@ -130,7 +142,8 @@ class Environment(object):
         return param_set
 
     def run_multiple_sims(self, action, sim_params_set, init_joints=None,
-                          bottle_pos=None, bottle_ori=None):
+                          bottle_pos=None, bottle_ori=None,
+                          use_vel_control=False):
         """
         Simply run multiple simulations with different environmental parameters.
         Return a list of all results, each entry as a tuple. Let the planner do
@@ -142,7 +155,8 @@ class Environment(object):
                                    sim_params=sim_params,
                                    init_joints=init_joints,
                                    bottle_pos=np.copy(bottle_pos),
-                                   bottle_ori=bottle_ori)
+                                   bottle_ori=bottle_ori,
+                                   use_vel_control=use_vel_control)
             all_results.append(results)
 
             # extra optimization: if arm didn't touch bottle, no need for more
@@ -153,7 +167,7 @@ class Environment(object):
 
         return all_results
 
-    def run_sim(self, action: np.ndarray, sim_params: EnvParams,
+    def run_sim(self, action, sim_params: EnvParams,
                 init_joints=None, bottle_pos=None, bottle_ori=None,
                 use_vel_control=False):
         """Deterministic simulation where all parameters are already set and
@@ -162,20 +176,21 @@ class Environment(object):
         Arguments:
             action {np.ndarray} -- offset in joint space, generated in ActionSpace
         """
+        (dq_vec, iters) = action
         if init_joints is None:  # use arm's current joint state
             init_joints = np.array(self.arm.joint_pose)
         else:
             init_joints = np.array(init_joints)
-        target_joint_pose = init_joints + action
+        target_joint_pose = init_joints + dq_vec
 
         if use_vel_control:
             joint_vel_traj = np.zeros((self.min_iters, self.arm.num_DOF))
-            for qi, dq in enumerate(action):
+            for qi, dq in enumerate(dq_vec):
                 if not np.isclose(dq, 0):
                     start = State(x=init_joints[qi], v=0, t=0)
                     end = State(
                         x=target_joint_pose[qi], v=0,
-                        t=self.min_iters)
+                        t=iters)
                     # dqmax = self.arm.calc_max_joint_vel(
                     #     ji=qi, dt=self.dt, joint_pose=init_joints)
                     vel_profile = gen_trapezoidal_velocity_profile(
@@ -187,10 +202,12 @@ class Environment(object):
         # Position control
         else:
             # don't create linear interp, just let internal pybullet PID get to target
-            target_traj = np.array([init_joints, target_joint_pose])
+            target_traj = np.linspace(
+                start=init_joints, stop=target_joint_pose, num=iters)
 
         return self.simulate_plan(init_pose=init_joints,
-                                  traj=target_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                                  traj=target_traj, bottle_pos=bottle_pos,
+                                  bottle_ori=bottle_ori,
                                   use_vel_control=use_vel_control,
                                   sim_params=sim_params)
 
@@ -226,7 +243,7 @@ class Environment(object):
 
         iter = 0
         traj_len = traj.shape[0]
-        while iter < self.min_iters or (iter < self.max_iters and not bottle_stopped):
+        while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
             next_target = traj[min(iter, traj_len - 1), :]
             if use_vel_control:
@@ -248,6 +265,7 @@ class Environment(object):
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
+
             contacts = p.getContactPoints(
                 self.arm.kukaId, self.bottle.bottle_id)
             is_collision |= (len(contacts) > 0)
@@ -283,8 +301,6 @@ class Environment(object):
         is_fallen = self.bottle.check_is_fallen()
         bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
             self.bottle.bottle_id)
-        final_arm_pos = np.array(p.getLinkState(
-            self.arm.kukaId, self.arm.EE_idx)[4])
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
@@ -343,6 +359,12 @@ class Environment(object):
         # last eigenvector corresponds to largest eigenvalue
         avg_quat = VT[0, :]
         return avg_quat  # / np.linalg.norm(avg_quat)
+
+    @ staticmethod
+    def state_to_str(state):
+        syms = "%.2f," * state.shape[0]
+        vals = tuple(state)
+        return syms % vals
 
 
 def test_environment_avg_quat():
