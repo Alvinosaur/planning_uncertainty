@@ -19,8 +19,11 @@ class Bottle:
     VOL_TO_MASS = 0.0296   # fl-oz to kg
     PLASTIC_MASS = 0.0127  # kg
     PLANE_OFFSET = 0.056
-    INIT_PLANE_OFFSET = 0.03805010362200368  # found experimentally
-    # PLANE_OFFSET = 0
+    # INIT_PLANE_OFFSET = 0.03805010362200368  # found experimentally
+    INIT_PLANE_OFFSET = 0
+
+    # CUP OBJECT PARAMETERS
+    CUP_HEIGHT = 0.15  # this is when scale of z is 1
 
     def __init__(self, start_pos, start_ori, fill_prop=0.5, mesh_scale=[1, 1, 1]):
         self.start_pos = start_pos
@@ -29,7 +32,8 @@ class Bottle:
 
         self.max_volume = self.DEFAULT_MAX_VOLUME      # fl-oz
         self.radius = self.DEFAULT_RADIUS    # m
-        self.height = self.DEFAULT_HEIGHT     # m
+        # self.height = self.DEFAULT_HEIGHT     # m
+        self.height = self.CUP_HEIGHT * mesh_scale[-1]
         self.default_fric = 0.1  # plastic-wood dynamic friction
         self.lat_fric = self.default_fric
         self.min_fill = 0.3
@@ -40,6 +44,7 @@ class Bottle:
         self.inertial_shift = None
         self.center_of_mass = None
         self.default_com = np.array([0, 0, self.height / 2])
+        self.fill_prop = fill_prop
         self.set_fill_proportion(fill_prop)
 
         # create visual and collision bottle object
@@ -55,9 +60,10 @@ class Bottle:
                                                  self.folder, "cup.obj"),
                                              meshScale=mesh_scale)
         self.bottle_id = None  # defined in create_sim_bottle
-        self.create_sim_bottle()
+        # self.create_sim_bottle()
 
     def set_fill_proportion(self, fill_prop):
+        self.fill_prop = fill_prop
         self.bottle_mass = self.mass_from_fill(fill_prop)
         self.center_of_mass = self.com_from_fill(fill_prop)
         self.inertial_shift = self.center_of_mass - self.default_com
@@ -81,7 +87,17 @@ class Bottle:
         if self.bottle_id is not None:
             p.removeBody(self.bottle_id)
 
-    def create_sim_bottle(self, pos=None, ori=None):
+    def create_sim_bottle(self, pos=None, ori=None, new_shape=None):
+        if new_shape is not None:
+            col_id, mesh_scale = new_shape
+            self.col_id = col_id
+            self.mesh_scale = mesh_scale
+            self.height = self.CUP_HEIGHT * mesh_scale[-1]
+            self.default_com = np.array([0, 0, self.height / 2])
+            # calculates new center of mass based on new cup height
+            # which is used as the target in 3D heuristic by planner
+            self.set_fill_proportion(self.fill_prop)
+
         # delete old bottle if it exists
         if self.bottle_id is not None:
             # NOTE: This line complains about error in removing, but pybullet
@@ -129,6 +145,8 @@ class Bottle:
 
 
 class Arm:
+    EE_min_height = 0.2
+
     def __init__(self, EE_start_pos, start_ori, kukaId, max_force=350):
         self.EE_start_pos = EE_start_pos
         self.start_ori = start_ori
@@ -138,6 +156,7 @@ class Arm:
         self.MAX_REACH = None  # need to set with set_general_max_reach()
         self.max_EE_vel = 1  # m/s
         self.max_joint_acc = 0.5
+        self.default_joint_pose = np.array([0, math.pi / 2, 0, 0, 0, 0, 0])
 
         # NOTE: taken from example:
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
@@ -220,8 +239,12 @@ class Arm:
 
     def reset(self, joint_pose):
         self.joint_pose = joint_pose
-        for i in range(self.num_joints):
-            p.resetJointState(self.kukaId, i, self.joint_pose[i])
+        # Pybullet is strange in how sometimes you specify a desired joint pose
+        # and it doesn't do anything on the first try (if IK was initialized poorly)
+        # so we call multiple times just to ensure
+        for i in range(3):
+            for i in range(self.num_joints):
+                p.resetJointState(self.kukaId, i, self.joint_pose[i])
 
     def resetEE(self, target_pos=None, angle=0):
         p.resetBasePositionAndOrientation(
@@ -271,14 +294,14 @@ class Arm:
             [type]: [description]
         """
         assert(len(self.ll) == len(self.ul) == len(self.jr) == len(self.rp))
-        joint_poses = p.calculateInverseKinematics(
-            self.kukaId,
-            self.EE_idx,
-            target_EE_pos,
-            lowerLimits=self.ll.tolist(),
-            upperLimits=self.ul.tolist(),
-            jointRanges=self.jr.tolist(),
-            restPoses=self.rp.tolist())
+        # joint_poses = p.calculateInverseKinematics(
+        #     self.kukaId,
+        #     self.EE_idx,
+        #     target_EE_pos,
+        #     lowerLimits=self.ll.tolist(),
+        #     upperLimits=self.ul.tolist(),
+        #     jointRanges=self.jr.tolist(),
+        #     restPoses=self.rp.tolist())
         # joint_poses = np.clip(joint_poses, self.ll, self.ul)
         orn = p.getQuaternionFromEuler([-math.pi / 2, 0, angle - math.pi / 2])
         # joint_poses = list(p.calculateInverseKinematics(
@@ -290,13 +313,13 @@ class Arm:
         #     upperLimits=self.ul,
         #     jointRanges=self.jr,
         #     restPoses=self.rp))
-        # joint_poses = p.calculateInverseKinematics(
-        #     self.kukaId,
-        #     self.EE_idx,
-        #     target_EE_pos,
-        #     orn,
-        #     jointDamping=self.jd,
-        #     solver=self.ikSolver)
+        joint_poses = p.calculateInverseKinematics(
+            self.kukaId,
+            self.EE_idx,
+            target_EE_pos,
+            orn,
+            jointDamping=self.jd,
+            solver=self.ikSolver)
         # maxNumIterations=100,
         # residualThreshold=.01)
 

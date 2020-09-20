@@ -553,7 +553,9 @@ class NaivePlanner():
     def reached_goal(self, state):
         dist_to_goal = self.dist_bottle_to_goal(state)
         print("Pos: %.2f,%.2f" % tuple(self.bottle_pos_from_state(state)[:2]))
-        print("%.2f ?< %.2f" % (dist_to_goal, self.dist_thresh))
+        print("arm_to_bottle: %.2f" % (self.dist_arm_to_bottle(state)))
+        print("bottle_to_goal: %.2f ?< %.2f" %
+              (dist_to_goal, self.dist_thresh))
         return dist_to_goal < self.dist_thresh
 
     def state_to_key(self, state):
