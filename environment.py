@@ -23,8 +23,7 @@ class ActionSpace():
                  ignore_last_joint=True):
         self.num_DOF = num_DOF
         self.da_rad = da_rad
-        # self.traj_iter_set = [100, 150, 200]
-        self.traj_iter_set = [200]
+        self.traj_iter_set = [150, 175, 200]
 
         pos_moves = np.eye(N=num_DOF) * da_rad
         neg_moves = np.eye(N=num_DOF) * -da_rad

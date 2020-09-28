@@ -102,6 +102,9 @@ def replan_exec_loop(env: Environment, planner: NaivePlanner,
 
         # combine a policy into one smooth trajectory
         init_joints = np.array(planner.joint_pose_from_state(start))
+        if len(policy) == 0:
+            print("Policy length == 0 but planning completed?")
+            raise(Exception("Policy = 0 returned!"))
         full_arm_traj = policy_to_full_traj(init_joints, policy)
 
         # When executing plan, use different environment parameters to examine
@@ -181,7 +184,7 @@ def simulate_planner_random_env(env: Environment, planner: NaivePlanner,
                     env=env, planner=planner, bottle_pos=init_bottle_pos, bottle_ori=init_bottle_ori, start=start, goal=goal,
                     exec_params=exec_params,
                     metrics=metrics)
-        except TimeoutException:
+        except:
             print("Plan/Exec Loop Timed out!")
 
             # if timed out during planning, then we know end_time < start_time
@@ -210,11 +213,15 @@ def simulate_planner_random_env(env: Environment, planner: NaivePlanner,
 
     # only consider success, fall, and replan for successful initial plans
     found_plan_count = iters - failed_plan_count
-    success_rate = success_count / float(found_plan_count)
-    fall_rate = fall_count / float(found_plan_count)
-    avg_num_replan_attempts = replan_count / float(found_plan_count)
-    avg_initial_plan_time = total_initial_plan_time / float(found_plan_count)
-    avg_total_plan_time = total_plan_time / float(found_plan_count)
+    if found_plan_count == 0:
+        success_rate = fall_rate = avg_num_replan_attempts = avg_initial_plan_time = avg_total_plan_time = 0
+    else:
+        success_rate = success_count / float(found_plan_count)
+        fall_rate = fall_count / float(found_plan_count)
+        avg_num_replan_attempts = replan_count / float(found_plan_count)
+        avg_initial_plan_time = total_initial_plan_time / \
+            float(found_plan_count)
+        avg_total_plan_time = total_plan_time / float(found_plan_count)
 
     print("Results for %d iters and max time(s): %d" % (iters, max_time_s))
     printout = "Success rate: %.2f, " % success_rate
@@ -428,7 +435,7 @@ def main():
     # each sim takes ~0.02s, for the avg/mode, simulating one action takes
     # t = num_rand_samples * 0.02 if there is a collision, else just 0.02
     # num actions to try out = ~max_time_s / t
-    max_time_s = 200  # s
+    max_time_s = 100  # s
     # test_plan_exec(env=env, planner=single_planner, start=start,
     #                goal=goal, exec_params=exec_params_set[0])
     # print(single_planner.sim_params_set[0])
@@ -438,7 +445,8 @@ def main():
     #                sim_mode=sim_mode)
 
     # Create many different object types
-    scale_x = np.linspace(start=0.8, stop=1.2, num=3, endpoint=True)
+    # scale_x = np.linspace(start=0.8, stop=1.2, num=1, endpoint=True)
+    scale_x = [1.0]
     scale_y = np.linspace(start=0.8, stop=1.2, num=3, endpoint=True)
     scale_z = np.linspace(start=0.8, stop=1.2, num=3, endpoint=True)
     all_cup_shapes = []  # x, y, z
@@ -453,148 +461,68 @@ def main():
 
                 all_cup_shapes.append((col_id, mesh_scale))
 
+    num_configs = 10
     with open("feasible_configs.obj", "rb") as f:
-        results = pickle.load(f)
+        feasible_configs = pickle.load(f)
 
-    # combine a policy into one smooth trajectory
-    (start, goal) = results["filtered_start_goal_pairs"][0]
-    init_joints = np.array(single_planner.joint_pose_from_state(start))
-    bottle_pos = single_planner.bottle_pos_from_state(start)
-    full_arm_traj = policy_to_full_traj(init_joints, results["policy"])
-    for new_shape in all_cup_shapes:
-        env.bottle.create_sim_bottle(new_shape=new_shape)
-        env.simulate_plan(init_pose=init_joints,
-                          traj=full_arm_traj, bottle_pos=bottle_pos,
-                          bottle_ori=[0, 0, 0, 1],
-                          use_vel_control=single_planner.use_vel_control,
-                          sim_params=results["plan_params"][0])
+    with open("exec_params_set.obj", "wb") as f:
+        exec_plan_params = dict(exec_params_set=exec_params_set,
+                                plan_params_sets=plan_params_sets)
+        pickle.dump(exec_plan_params, f)
 
-    exit()
+    planners = [single_planner, avg_planner, mode_planner]
+    names = ["single", "avg", "mode"]
+    for pi, planner in enumerate(planners):
+        name = names[pi]
+        if SAVE_STDOUT_TO_FILE:
+            sys.stdout = open('%s_planner_output.txt' % name, 'w')
 
-    LOAD_RAND_START_GOALS = True
-    if LOAD_RAND_START_GOALS:
-        scenario_params = np.load("rand_start_goals.npz", allow_pickle=True)
-        start_goal_pairs = scenario_params["start_goal_pairs"]
-        # policies = scenario_params["policies"]
-        # sim_params = scenario_params["sim_params"]
-        # single_planner.sim_params_set = sim_params
-    else:
-        # define all different (start, goal) test scenarios
-        valid_bottle_positions = []
-        max_horiz_dist = np.linalg.norm(arm.max_straight_pos[:2])
-
-        delx = dely = 0.15
-        sx, sy, _ = bottle_start_pos
-        gx, gy, _ = bottle_goal_pos
-
-        for start_x in np.linspace(start=sx - delx, stop=sx + delx, num=5):
-            for start_y in np.linspace(start=sy - dely, stop=sy + dely, num=5):
-                start_dist = np.linalg.norm([start_x, start_y])
-                for goal_x in np.linspace(start=gx - delx,
-                                          stop=gx + delx, num=5):
-                    for goal_y in np.linspace(start=gy - dely,
-                                              stop=gy + dely, num=5):
-                        goal_dist = np.linalg.norm([goal_x, goal_y])
-                        start = (start_x, start_y, Bottle.INIT_PLANE_OFFSET)
-                        goal = (goal_x, goal_y, 0)
-                        valid_bottle_positions.append((start, goal))
-
-        rand_arm_to_bottle_ang = np.linspace(
-            start=30, stop=60, num=15) * math.pi / 180
-        start_goal_pairs = []
-        for (bottle_start, bottle_goal) in valid_bottle_positions:
-            # determine where to place arm start
-            start_angle = math.atan2(bottle_start[1], bottle_start[0])
-            goal_angle = math.atan2(bottle_goal[1], bottle_goal[0])
-            ang_diff = goal_angle - start_angle
-            angle_offset = np.random.choice(rand_arm_to_bottle_ang)
-            if ang_diff < 0:
-                arm_base_angle = start_angle + angle_offset
-            else:
-                arm_base_angle = start_angle - angle_offset
-
-            new_joint_pose = np.copy(arm.default_joint_pose)
-            new_joint_pose[0] = arm_base_angle
-            # arm_EE_pos = [max_horiz_dist * math.cos(arm_base_angle),
-            #               max_horiz_dist * math.sin(arm_base_angle), arm.EE_min_height]
-            # arm.EE_start_pos = np.array(arm_EE_pos)
-            # arm.init_joints = arm.get_target_joints(arm.EE_start_pos, angle=0)
-            # # just to prevent failed IK solution
-            # arm.reset(joint_pose=arm.default_joint_pose)
-            # arm.reset(joint_pose=arm.init_joints)
-
-            # create actual start and goal states from botle and arm joint poses
-            start = np.concatenate(
-                [bottle_start, new_joint_pose])
-            goal = np.concatenate(
-                [bottle_goal, np.zeros_like(new_joint_pose)])
-            start_goal_pairs.append((start, goal))
-
-            # try to see if this start, goal is feasible
-            # try:
-            #     with time_limit(50):
-            #         state_path, policy = single_planner.plan(
-            #             start=start, goal=goal)
-
-            #         # succeeded in finding a plan, so store these
-            #         start_goal_pairs.append((start, goal))
-            #         policies.append(policy)
-            # except TimeoutException:
-            #     continue
-
-        np.savez("rand_start_goals",
-                 start_goal_pairs=start_goal_pairs)
-
-    # planners = [single_planner, avg_planner, mode_planner]
-    # names = ["single", "avg", "mode"]
-    # for pi, planner in enumerate(planners):
-    #     name = names[pi]
-    #     if SAVE_STDOUT_TO_FILE:
-    #         sys.stdout = open('%s_planner_output.txt' % name, 'w')
-
-    #     # iterate through different object types and (start, goal) permuatations
-    #     for (start, goal) in start_goal_pairs:
-    #         for new_shape in all_cup_shapes:
-    #             # change bottle shape and center of mass based on new height
-    #             env.bottle.create_sim_bottle(new_shape=new_shape)
-
-    #             simulate_planner_random_env(env=env, planner=planner,
-    #                                         start=start, goal=goal,
-    #                                         exec_params_set=exec_params_set,
-    #                                         plan_params_set_per_iter=plan_params_sets,
-    #                                         iters=num_iters, max_time_s=max_time_s)
+        # iterate through different object types and (start, goal) permuatations
+        for (start, goal) in feasible_configs["filtered_start_goal_pairs"][:num_configs]:
+            for new_shape in all_cup_shapes:
+                print("Start(%s) and goal(%s)" % (str(start), str(goal)))
+                mesh_scale = new_shape[1]
+                print("Mesh scale (x, y, z): (%.2f, %.2f, %.2f)" % (
+                    mesh_scale[0], mesh_scale[1], mesh_scale[2]))
+                # change bottle shape and center of mass based on new height
+                env.bottle.create_sim_bottle(new_shape=new_shape)
+                simulate_planner_random_env(env=env, planner=planner,
+                                            start=start, goal=goal,
+                                            exec_params_set=exec_params_set,
+                                            plan_params_set_per_iter=plan_params_sets,
+                                            iters=num_iters, max_time_s=max_time_s)
     # start_plan_time = time.time()
     # exec_params = exec_params_set[0]
     # print(single_planner.sim_params_set)
     # input()
     # index = 0
-    if SAVE_STDOUT_TO_FILE:
-        sys.stdout = open('temp_output.txt', 'w')
-    filtered_start_goal_pairs = []
-    policies = []
-    for (start, goal) in start_goal_pairs:
-        if VISUALIZE:
-            # visualize a vertical blue line representing goal pos of bottle
-            # just to make line vertical
-            vertical_offset = np.array([0, 0, 0.5])
-            bottle_goal_pos = single_planner.bottle_pos_from_state(goal)
-            Environment.draw_line(lineFrom=bottle_goal_pos,
-                                  lineTo=bottle_goal_pos + vertical_offset,
-                                  lineColorRGB=[0, 0, 1], lineWidth=1,
-                                  lifeTime=0)
+    # if SAVE_STDOUT_TO_FILE:
+    #     sys.stdout = open('temp_output.txt', 'w')
+    # filtered_start_goal_pairs = []
+    # policies = []
+    # for (start, goal) in start_goal_pairs:
+    #     if VISUALIZE:
+    #         # visualize a vertical blue line representing goal pos of bottle
+    #         # just to make line vertical
+    #         vertical_offset = np.array([0, 0, 0.5])
+    #         bottle_goal_pos = single_planner.bottle_pos_from_state(goal)
+    #         Environment.draw_line(lineFrom=bottle_goal_pos,
+    #                               lineTo=bottle_goal_pos + vertical_offset,
+    #                               lineColorRGB=[0, 0, 1], lineWidth=1,
+    #                               lifeTime=0)
 
-        try:
-            with time_limit(30):
-                state_path, policy = single_planner.plan(
-                    start=start, goal=goal)
+    #     try:
+    #         with time_limit(30):
+    #             state_path, policy = single_planner.plan(
+    #                 start=start, goal=goal)
 
-                # succeeded in finding a plan, so store these
-                filtered_start_goal_pairs.append((start, goal))
-                policies.append(policy)
-                print("Found a feasible config!")
-        except TimeoutException:
-            print("Timed out!")
-            continue
+    #             # succeeded in finding a plan, so store these
+    #             filtered_start_goal_pairs.append((start, goal))
+    #             policies.append(policy)
+    #             print("Found a feasible config!")
+    #     except TimeoutException:
+    #         print("Timed out!")
+    #         continue
 
     # feasible_configs = dict(policies=policies,
     #                         filtered_start_goal_pairs=filtered_start_goal_pairs,
@@ -609,6 +537,30 @@ def main():
     #                0.51, 2.09, -0.11, 0.46, -0.14, 2.08, -0.93])
     # print(planner.state_to_key(s1))
     # print(planner.state_to_key(s2))
+
+    # combine a policy into one smooth trajectory
+    # (start, goal) = results["filtered_start_goal_pairs"][0]
+    # init_joints = np.array(single_planner.joint_pose_from_state(start))
+    # bottle_pos = single_planner.bottle_pos_from_state(start)
+    # full_arm_traj = policy_to_full_traj(init_joints, results["policy"])
+    # for new_shape in all_cup_shapes:
+    #     env.bottle.create_sim_bottle(new_shape=new_shape)
+    #     env.simulate_plan(init_pose=init_joints,
+    #                       traj=full_arm_traj, bottle_pos=bottle_pos,
+    #                       bottle_ori=[0, 0, 0, 1],
+    #                       use_vel_control=single_planner.use_vel_control,
+    #                       sim_params=results["plan_params"][0])
+
+    """For now, go one-step at a time, take a set of  10 (start, goal) pairs,
+verify that single planner works on them for different objects. Then verify
+visually that average plannner also works on them. For avg, don't average the
+next state, only average the fall probability. Next  state should be identical
+to the single planner's generated next state just to be consistent, so that
+means avg planner shouuld uuse single planner's sim param to generate this. Also
+make it so that there are no infeasible edges for average  planner except 100%
+fall probability so we  don't end up with no plan, but may end up with a very
+unsafe, high cost plan. 
+    """
 
 
 if __name__ == "__main__":
@@ -629,3 +581,79 @@ if __name__ == "__main__":
     #     start = np.concatenate([bstart, arm.joint_pose])
     #     goal = np.concatenate([bgoal, np.zeros_like(arm.joint_pose)])
     #     start_goal_pairs.append((start, goal))
+#
+#
+#
+    # LOAD_RAND_START_GOALS = True
+    # if LOAD_RAND_START_GOALS:
+    #     scenario_params = np.load("rand_start_goals.npz", allow_pickle=True)
+    #     start_goal_pairs = scenario_params["start_goal_pairs"]
+    #     # policies = scenario_params["policies"]
+    #     # sim_params = scenario_params["sim_params"]
+    #     # single_planner.sim_params_set = sim_params
+    # else:
+    #     # define all different (start, goal) test scenarios
+    #     valid_bottle_positions = []
+    #     max_horiz_dist = np.linalg.norm(arm.max_straight_pos[:2])
+
+    #     delx = dely = 0.15
+    #     sx, sy, _ = bottle_start_pos
+    #     gx, gy, _ = bottle_goal_pos
+
+    #     for start_x in np.linspace(start=sx - delx, stop=sx + delx, num=5):
+    #         for start_y in np.linspace(start=sy - dely, stop=sy + dely, num=5):
+    #             start_dist = np.linalg.norm([start_x, start_y])
+    #             for goal_x in np.linspace(start=gx - delx,
+    #                                       stop=gx + delx, num=5):
+    #                 for goal_y in np.linspace(start=gy - dely,
+    #                                           stop=gy + dely, num=5):
+    #                     goal_dist = np.linalg.norm([goal_x, goal_y])
+    #                     start = (start_x, start_y, Bottle.INIT_PLANE_OFFSET)
+    #                     goal = (goal_x, goal_y, 0)
+    #                     valid_bottle_positions.append((start, goal))
+
+    #     rand_arm_to_bottle_ang = np.linspace(
+    #         start=30, stop=60, num=15) * math.pi / 180
+    #     start_goal_pairs = []
+    #     for (bottle_start, bottle_goal) in valid_bottle_positions:
+    #         # determine where to place arm start
+    #         start_angle = math.atan2(bottle_start[1], bottle_start[0])
+    #         goal_angle = math.atan2(bottle_goal[1], bottle_goal[0])
+    #         ang_diff = goal_angle - start_angle
+    #         angle_offset = np.random.choice(rand_arm_to_bottle_ang)
+    #         if ang_diff < 0:
+    #             arm_base_angle = start_angle + angle_offset
+    #         else:
+    #             arm_base_angle = start_angle - angle_offset
+
+    #         new_joint_pose = np.copy(arm.default_joint_pose)
+    #         new_joint_pose[0] = arm_base_angle
+    #         # arm_EE_pos = [max_horiz_dist * math.cos(arm_base_angle),
+    #         #               max_horiz_dist * math.sin(arm_base_angle), arm.EE_min_height]
+    #         # arm.EE_start_pos = np.array(arm_EE_pos)
+    #         # arm.init_joints = arm.get_target_joints(arm.EE_start_pos, angle=0)
+    #         # # just to prevent failed IK solution
+    #         # arm.reset(joint_pose=arm.default_joint_pose)
+    #         # arm.reset(joint_pose=arm.init_joints)
+
+    #         # create actual start and goal states from botle and arm joint poses
+    #         start = np.concatenate(
+    #             [bottle_start, new_joint_pose])
+    #         goal = np.concatenate(
+    #             [bottle_goal, np.zeros_like(new_joint_pose)])
+    #         start_goal_pairs.append((start, goal))
+
+    #         # try to see if this start, goal is feasible
+    #         # try:
+    #         #     with time_limit(50):
+    #         #         state_path, policy = single_planner.plan(
+    #         #             start=start, goal=goal)
+
+    #         #         # succeeded in finding a plan, so store these
+    #         #         start_goal_pairs.append((start, goal))
+    #         #         policies.append(policy)
+    #         # except TimeoutException:
+    #         #     continue
+
+    #     np.savez("rand_start_goals",
+    #              start_goal_pairs=start_goal_pairs)
