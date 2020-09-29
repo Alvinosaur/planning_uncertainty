@@ -392,7 +392,7 @@ def test_env_params():
     # only mark failure if every single sim of action failed
     fall_proportion_thresh = 1.0
     # iters_per_traj_set = [150, 175, 200]
-    iters_per_traj_set = [50, 80, 200]
+    iters_per_traj_set = [50, 80, 150]
     planner = NaivePlanner(env, xbounds,
                            ybounds, dist_thresh, eps, da_rad=da_rad,
                            dx=dx, dy=dy, dz=dz, use_3D=use_3D, sim_mode=SINGLE, num_rand_samples=1,
