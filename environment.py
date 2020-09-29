@@ -19,11 +19,12 @@ class ActionSpace():
     """
     default_da_rad = 5.0 * math.pi / 180.0  # default 5 degrees offsets
 
-    def __init__(self, num_DOF, da_rad=default_da_rad, include_no_change=False,
+    def __init__(self, num_DOF, iters_per_traj_set,
+                 da_rad=default_da_rad, include_no_change=False,
                  ignore_last_joint=True):
         self.num_DOF = num_DOF
         self.da_rad = da_rad
-        self.traj_iter_set = [150, 175, 200]
+        self.traj_iter_set = iters_per_traj_set
 
         pos_moves = np.eye(N=num_DOF) * da_rad
         neg_moves = np.eye(N=num_DOF) * -da_rad

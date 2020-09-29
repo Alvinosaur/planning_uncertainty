@@ -18,9 +18,8 @@ class Bottle:
     WATER_DENSITY = 997    # kg/m³
     VOL_TO_MASS = 0.0296   # fl-oz to kg
     PLASTIC_MASS = 0.0127  # kg
-    PLANE_OFFSET = 0.056
-    # INIT_PLANE_OFFSET = 0.03805010362200368  # found experimentally
-    INIT_PLANE_OFFSET = 0
+    # PLANE_OFFSET = 0.056
+    PLANE_OFFSET = 0.001
 
     # CUP OBJECT PARAMETERS
     CUP_HEIGHT = 0.15  # this is when scale of z is 1
@@ -110,7 +109,12 @@ class Bottle:
             ori = self.start_ori
         if pos is not None:
             x, y, z = pos
-            pos = [x, y, z + self.PLANE_OFFSET]
+
+            # NOTE: due to noise in simulator, z position may become slightly
+            # negative and make bottle pop out from the ground, so apply lower
+            # bound
+            z = max(z, self.PLANE_OFFSET)
+            pos = [x, y, z]
             self.bottle_id = p.createMultiBody(
                 baseMass=self.bottle_mass,
                 baseInertialFramePosition=self.inertial_shift,
@@ -151,12 +155,13 @@ class Arm:
         self.EE_start_pos = EE_start_pos
         self.start_ori = start_ori
         self.kukaId = kukaId
-        self.base_pos = np.array([0, 0, 0.1])
+        self.base_pos = np.array([0, 0, -0.1])
         self.min_dist = 0.3
         self.MAX_REACH = None  # need to set with set_general_max_reach()
         self.max_EE_vel = 1  # m/s
         self.max_joint_acc = 0.5
-        self.default_joint_pose = np.array([0, math.pi / 2, 0, 0, 0, 0, 0])
+        self.default_joint_pose = np.array(
+            [0, math.pi / 2, math.pi / 2, 0, 0, 0, 0])
 
         # NOTE: taken from example:
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py

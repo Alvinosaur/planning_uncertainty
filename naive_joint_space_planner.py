@@ -83,7 +83,8 @@ class NaivePlanner():
                  eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0,
                  use_3D=True, sim_mode=SINGLE, num_rand_samples=1,
                  fall_proportion_thresh=0.5,
-                 use_vel_control=False):
+                 use_vel_control=False,
+                 iters_per_traj_set=[200]):
         """[summary]
 
         Args:
@@ -114,6 +115,7 @@ class NaivePlanner():
         # NOTE: last joint doesn't contribute to motion of arm since no gripper
         # at end, so just ignore it for set of actions
         self.A = ActionSpace(num_DOF=self.num_joints,
+                             iters_per_traj_set=iters_per_traj_set,
                              da_rad=self.da, ignore_last_joint=True)
         self.use_vel_control = use_vel_control
 
@@ -185,7 +187,11 @@ class NaivePlanner():
 
     def avg_results(self, results):
         """
-        Randomly sample internal(unobservable to agent) bottle parameters for each iteration, and return cost and next state averaged over all iterations. In cases where bottle falls, next state is not included in average next state.
+        Randomly sample internal(unobservable to agent) bottle parameters for
+        each iteration to calculate expected fall rate. 
+
+        Only the first sim param (which should be same as the single planner)
+         will be used to determine cost and next state.
 
         NOTE: this is still not stochastic because we overall are using some finalized cost and next state to represent successor of a (state, action) pair. In a true stochastic planner, successors are represented
         by a belief space, or distribution of possible next states, each with
@@ -196,13 +202,8 @@ class NaivePlanner():
         avg_fall_prob = 0
         fall_prob_norm = 0
 
-        sum_next_bpos = np.zeros(3)
-        next_bottle_ori_bins = []
-        next_bottle_ori_counts = []
-
-        # only use the first result since unaffected by bottle parameters,
-        # averaging vectors of angles can lead to infeasible states
-        avg_next_joint_pos = None
+        # only the first run is used to determine next state and reward
+        _, _, bpos, bori, next_joint_pos = results[0]
 
         # NOTE: simulation automatically terminates if the arm doesn't touch
         # bottle since no need to simulate different bottle parameters
@@ -211,49 +212,16 @@ class NaivePlanner():
         for i in range(num_iters):
             is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
 
-            # only assign once
-            if avg_next_joint_pos is None:
-                avg_next_joint_pos = next_joint_pos
-
             # weighted sum of fall counts: sum(pi*xi) / sum(pi)
             avg_fall_prob += is_fallen * self.param_probs[i]
             fall_prob_norm += self.param_probs[i]
 
-            # avg next bottle position is simple average, ignores fallen ones
-            if not is_fallen:
-                sum_next_bpos += bpos
-
-                # bin bottle orientation
-                # one-hot vector showing which, if any stored bottle orientations
-                # match current bori
-                ori_comparisons = [self.is_quat_equal(bori, q)
-                                   for q in next_bottle_ori_bins]
-                match = np.where(ori_comparisons)[0]
-                if len(match) == 1:
-                    match_i = match[0]
-                    next_bottle_ori_counts[match_i] += 1
-                else:
-                    next_bottle_ori_bins.append(bori)
-                    next_bottle_ori_counts.append(1)
-
-        # Determine average next state
-        try:
-            most_common_ori = next_bottle_ori_bins[np.argmax(
-                next_bottle_ori_counts)]
-        # all were failures, so just set to None since will be marked all
-        # invalid  transition anyways
-        except ValueError:
-            most_common_ori = None
-        avg_next_bpos = sum_next_bpos / float(num_iters)
-
         # normalize by sum of weights (not all but only up to num_iters)
         fall_proportion = avg_fall_prob / fall_prob_norm
-        invalid = fall_proportion > self.fall_proportion_thresh
+        print("Fall proportion: %.2f" % fall_proportion)
+        invalid = fall_proportion >= self.fall_proportion_thresh
 
-        return (invalid,
-                avg_next_bpos,
-                most_common_ori,
-                avg_next_joint_pos)
+        return (invalid, bpos, bori, next_joint_pos)
 
     def mode_results(self, results):
         """
@@ -351,8 +319,8 @@ class NaivePlanner():
                 continue
             closed_set.add(state_key)
 
-            print("Expanded: (%s) (%s) (%d)" %
-                  (self.state_to_str(state[:3]), self.state_to_str(state[3:3 + self.num_joints] * 180 / math.pi), state[-1]))
+            print("Expanded(%.2f): (%s) (%s) (%d)" %
+                  (n.cost, self.state_to_str(state[:3]), self.state_to_str(state[3:3 + self.num_joints] * 180 / math.pi), state[-1]), flush=True)
 
             # check if found goal, if so loop will terminate in next iteration
             if self.reached_goal(state):
@@ -416,7 +384,8 @@ class NaivePlanner():
                 f = self.heuristic(next_state, next_bottle_ori)
                 trans_cost = self.calc_trans_cost(cur_joints, next_joint_pose)
                 new_G = cur_cost + trans_cost
-                # print("f: %.2f, s: %s" % (f, self.state_to_str(next_state)))
+                print("eps*f(%.2f) + g(%.2f) = h(%.2f)" %
+                      (f, new_G, new_G + self.eps * f))
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
@@ -430,7 +399,7 @@ class NaivePlanner():
                     # build directed graph
                     transitions[next_state_key] = (state_key, ai)
 
-        print("States Expanded: %d" % num_expansions)
+        print("States Expanded: %d" % num_expansions, flush=True)
         if not goal_expanded:
             return [], []
         # reconstruct path
@@ -530,10 +499,13 @@ class NaivePlanner():
             min_i = 0
             for i, pos in enumerate(positions):
                 if self.use_3D:
-                    sq_dist = np.linalg.norm(np.array(pos) - bottle_pos[:3])
+                    # sq_dist = np.linalg.norm(np.array(pos) - bottle_pos[:3])
+                    sq_dist = ((pos[0] - bottle_pos[0]) ** 2 +
+                               (pos[1] - bottle_pos[1]) ** 2 +
+                               1.5 * (pos[2] - bottle_pos[2]) ** 2)
                 else:
-                    sq_dist = np.linalg.norm(
-                        np.array(pos[:2]) - bottle_pos[:2])
+                    sq_dist = ((pos[0] - bottle_pos[0]) ** 2 +
+                               (pos[1] - bottle_pos[1]) ** 2)
                 if min_sq_dist is None or sq_dist < min_sq_dist:
                     min_sq_dist = sq_dist
                     min_i = i
@@ -547,15 +519,17 @@ class NaivePlanner():
         bottle_z_axis = z_axis @ Quaternion(bottle_ori).rotation_matrix
         bottle_z_axis /= np.linalg.norm(bottle_z_axis)
         ang = abs(math.acos(z_axis @ bottle_z_axis))
-        ang_weight = 0.3
-        return dist_to_goal + dist_arm_to_bottle + ang_weight * ang
+        ang_weight = 0.05
+        return 1.5 * dist_to_goal + dist_arm_to_bottle + ang_weight * ang
 
     def reached_goal(self, state):
         dist_to_goal = self.dist_bottle_to_goal(state)
-        print("Pos: %.2f,%.2f" % tuple(self.bottle_pos_from_state(state)[:2]))
-        print("arm_to_bottle: %.2f" % (self.dist_arm_to_bottle(state)))
+        print("Pos: %.2f,%.2f" %
+              tuple(self.bottle_pos_from_state(state)[:2]), flush=True)
+        print("arm_to_bottle: %.2f" %
+              (self.dist_arm_to_bottle(state)), flush=True)
         print("bottle_to_goal: %.2f ?< %.2f" %
-              (dist_to_goal, self.dist_thresh))
+              (dist_to_goal, self.dist_thresh), flush=True)
         return dist_to_goal < self.dist_thresh
 
     def state_to_key(self, state):
