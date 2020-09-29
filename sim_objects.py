@@ -67,15 +67,19 @@ class Bottle:
         self.center_of_mass = self.com_from_fill(
             fill_prop) + np.array([0, 0, 0.06])
         self.inertial_shift = self.center_of_mass - self.default_com
-        print(self.inertial_shift)
+        # print(self.inertial_shift)
 
     def mass_from_fill(self, fill_prop):
         minor_x = self.mesh_scale[0] * 0.15
         minor_y = self.mesh_scale[1] * 0.15
         avg_surface_area = math.pi * minor_x * minor_y
-        print(avg_surface_area, self.height, Bottle.VOL_TO_MASS)
+        # print(avg_surface_area, self.height, Bottle.VOL_TO_MASS)
         volume = avg_surface_area * self.height
-        return volume * Bottle.VOL_TO_MASS * fill_prop
+        # print(volume * Bottle.VOL_TO_MASS * fill_prop)
+        # print(fill_prop)
+        print("Fill prop: %.2f with mass: %.2f" %
+              (fill_prop, volume * Bottle.VOL_TO_MASS * fill_prop * self.WATER_DENSITY))
+        return volume * Bottle.VOL_TO_MASS * fill_prop * self.WATER_DENSITY
         # return Bottle.PLASTIC_MASS + (
         #     fill_prop * self.max_volume * Bottle.VOL_TO_MASS)
 

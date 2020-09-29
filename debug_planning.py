@@ -392,7 +392,7 @@ def test_env_params():
     # only mark failure if every single sim of action failed
     fall_proportion_thresh = 1.0
     # iters_per_traj_set = [150, 175, 200]
-    iters_per_traj_set = [50, 80, 200]
+    iters_per_traj_set = [50, 90, 200]
     planner = NaivePlanner(env, xbounds,
                            ybounds, dist_thresh, eps, da_rad=da_rad,
                            dx=dx, dy=dy, dz=dz, use_3D=use_3D, sim_mode=SINGLE, num_rand_samples=1,
@@ -403,10 +403,10 @@ def test_env_params():
     # Create many different object types
     # scale_x = np.linspace(start=0.8, stop=1.2, num=1, endpoint=True)
     scale_x = [0.8]
-    scale_y = np.linspace(start=0.6, stop=0.8, num=3, endpoint=True)
+    scale_y = np.linspace(start=0.8, stop=1.0, num=3, endpoint=True)
     scale_z = np.linspace(start=1.0, stop=1.2, num=3, endpoint=True)
-    for sy in scale_y:
-        for sx in scale_x:
+    for sx in scale_y:
+        for sy in scale_x:
             for sz in scale_z:
                 mesh_scale = [sx, sy, sz]
                 print(mesh_scale)
@@ -417,14 +417,16 @@ def test_env_params():
                 fill_props = [0.1, 0.4, 0.7, 1.0]
                 # frics = [0.02, 0.03, 0.04]
                 # frics = [0.1]  Too high, cap should be < this
-                frics = [0.03, 0.09]  # this is a good cap
+                frics = [0.09]  # this is a good cap
                 combos = [(fric, fill)
                           for fric in frics for fill in fill_props]
                 for fric, fill in combos:
                     env.bottle.set_fill_proportion(fill)
                     env.bottle.lat_fric = fric
-                    print("Fill: %.2f, fric: %.2f" %
+                    print(">>>>>>>>>Fill: %.2f, fric: %.2f" %
                           (fill, fric))
+                    sim_params = EnvParams(
+                        bottle_fill=fill, bottle_fric=fric, bottle_fill_prob=1, bottle_fric_prob=1)
 
                     for ai in [0, planner.A.actions_mat.shape[0], 2 * planner.A.actions_mat.shape[0]]:
                         print(ai)
@@ -440,7 +442,7 @@ def test_env_params():
                             action=action, init_joints=start_joints,
                             bottle_pos=bottle_start_pos,
                             bottle_ori=bottle_start_ori,
-                            sim_params=planner.sim_params_set[0],
+                            sim_params=sim_params,
                             use_vel_control=False)
 
 
