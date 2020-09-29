@@ -330,6 +330,115 @@ def test_plan_exec(env: Environment, planner: NaivePlanner,
                      metrics=metrics)
 
 
+def test_env_params():
+    use_3D = True  # use 3D euclidean distance heuristic and transition costs
+    VISUALIZE = True
+    REPLAY_RESULTS = False
+    SAVE_STDOUT_TO_FILE = False
+    sim_mode = SINGLE
+    replay_random = False  # replay with  random bottle parameters chosen
+    LOGGING = False
+    GRAVITY = -9.81
+    if VISUALIZE:
+        p.connect(p.GUI)  # or p.DIRECT for nongraphical version
+    else:
+        p.connect(p.DIRECT)
+    p.setAdditionalSearchPath(pybullet_data.getDataPath())
+    p.setGravity(0, 0, GRAVITY)
+    planeId = p.loadURDF(Environment.plane_urdf_filepath,
+                         basePosition=[0, 0, 0])
+    kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
+    if LOGGING and VISUALIZE:
+        log_id = p.startStateLogging(
+            p.STATE_LOGGING_VIDEO_MP4, "temp.mp4")
+
+    # bottle
+    # bottle_start_pos = np.array(
+    #     [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
+    # bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
+    bottle_start_pos = np.array(
+        [0.7, 0.1, 0]).astype(float)
+    bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
+    bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
+    bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
+
+    # starting end-effector pos, not base pos
+    EE_start_pos = np.array([0.5, 0.3, Arm.EE_min_height])
+    base_start_ori = np.array([0, 0, 0, 1]).astype(float)
+    max_force = 200  # N
+    arm = Arm(EE_start_pos=EE_start_pos,
+              start_ori=base_start_ori,
+              kukaId=kukaId,
+              max_force=max_force)
+    start_joints = arm.joint_pose
+
+    xbounds = [-0.4, -0.9]
+    ybounds = [-0.1, -0.9]
+    dx = dy = dz = 0.05
+    da_rad = 15 * math.pi / 180.0
+    dist_thresh = np.linalg.norm([dx, dy]) * 2
+    state_disc = np.concatenate([[dx, dy, dz], [da_rad] * arm.num_DOF])
+    # if  the below isn't true, you're expecting bottle to fall in exactly
+    # the same state bin as the goal
+    assert(dist_thresh >= dx)
+    eps = 40
+
+    # run planner and visualize result
+    env = Environment(arm, bottle, state_disc, is_viz=VISUALIZE,
+                      use_3D=use_3D, min_iters=50, max_iters=300)
+
+    # Create the three types of planners
+    use_vel_control = False
+    # only mark failure if every single sim of action failed
+    fall_proportion_thresh = 1.0
+    # iters_per_traj_set = [150, 175, 200]
+    iters_per_traj_set = [50, 100, 200]
+    planner = NaivePlanner(env, xbounds,
+                           ybounds, dist_thresh, eps, da_rad=da_rad,
+                           dx=dx, dy=dy, dz=dz, use_3D=use_3D, sim_mode=SINGLE, num_rand_samples=1,
+                           use_vel_control=use_vel_control,
+                           fall_proportion_thresh=fall_proportion_thresh,
+                           iters_per_traj_set=iters_per_traj_set)
+
+    # Create many different object types
+    # scale_x = np.linspace(start=0.8, stop=1.2, num=1, endpoint=True)
+    scale_x = [0.8]
+    scale_y = np.linspace(start=0.6, stop=0.8, num=3, endpoint=True)
+    scale_z = np.linspace(start=1.0, stop=1.2, num=3, endpoint=True)
+    for sy in scale_y:
+        for sx in scale_x:
+            for sz in scale_z:
+                mesh_scale = [sx, sy, sz]
+                print(mesh_scale)
+                col_id = p.createCollisionShape(shapeType=p.GEOM_MESH,
+                                                fileName=os.path.join(
+                                                    bottle.folder, "cup.obj"),
+                                                meshScale=mesh_scale)
+                fill_props = [0.1, 0.4, 0.7, 1.0]
+                env.bottle.lat_fric = 0.05
+                for fill in fill_props:
+                    env.bottle.set_fill_proportion(fill)
+                    print("Fill: %.2f with mass: %.2f" %
+                          (fill, env.bottle.bottle_mass))
+
+                    for ai in [0, planner.A.actions_mat.shape[0], 2 * planner.A.actions_mat.shape[0]]:
+                        print(ai)
+                        env.arm.resetEE()
+                        env.bottle.create_sim_bottle(
+                            new_shape=(col_id, mesh_scale))
+
+                        # action defined as an offset of joint angles of arm
+                        action = planner.A.get_action(ai)
+                        print("Num Iters: %d" % action[1])
+
+                        planner.sim_func(
+                            action=action, init_joints=start_joints,
+                            bottle_pos=bottle_start_pos,
+                            bottle_ori=bottle_start_ori,
+                            sim_params=planner.sim_params_set[0],
+                            use_vel_control=False)
+
+
 def main():
     use_3D = True  # use 3D euclidean distance heuristic and transition costs
     VISUALIZE = False
@@ -549,4 +658,4 @@ unsafe, high cost plan.
 
 
 if __name__ == "__main__":
-    main()
+    test_env_params()

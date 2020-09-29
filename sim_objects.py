@@ -28,6 +28,7 @@ class Bottle:
         self.start_pos = start_pos
         self.start_ori = start_ori
         self.col_id = None
+        self.mesh_scale = mesh_scale
 
         self.max_volume = self.DEFAULT_MAX_VOLUME      # fl-oz
         self.radius = self.DEFAULT_RADIUS    # m
@@ -35,7 +36,7 @@ class Bottle:
         self.height = self.CUP_HEIGHT * mesh_scale[-1]
         self.default_fric = 0.1  # plastic-wood dynamic friction
         self.lat_fric = self.default_fric
-        self.min_fill = 0.3
+        self.min_fill = 0.1
         self.max_fill = 1.0
 
         # sets mass and center of mass
@@ -52,7 +53,6 @@ class Bottle:
         #     radius=self.radius,
         #     height=self.height)
 
-        self.mesh_scale = mesh_scale
         self.folder = "objects"
         self.col_id = p.createCollisionShape(shapeType=p.GEOM_MESH,
                                              fileName=os.path.join(
@@ -64,12 +64,20 @@ class Bottle:
     def set_fill_proportion(self, fill_prop):
         self.fill_prop = fill_prop
         self.bottle_mass = self.mass_from_fill(fill_prop)
-        self.center_of_mass = self.com_from_fill(fill_prop)
+        self.center_of_mass = self.com_from_fill(
+            fill_prop) + np.array([0, 0, 0.055])
         self.inertial_shift = self.center_of_mass - self.default_com
+        print(self.inertial_shift)
 
     def mass_from_fill(self, fill_prop):
-        return Bottle.PLASTIC_MASS + (
-            fill_prop * self.max_volume * Bottle.VOL_TO_MASS)
+        minor_x = self.mesh_scale[0] * 0.15
+        minor_y = self.mesh_scale[1] * 0.15
+        avg_surface_area = math.pi * minor_x * minor_y
+        print(avg_surface_area, self.height, Bottle.VOL_TO_MASS)
+        volume = avg_surface_area * self.height
+        return volume * Bottle.VOL_TO_MASS * fill_prop
+        # return Bottle.PLASTIC_MASS + (
+        #     fill_prop * self.max_volume * Bottle.VOL_TO_MASS)
 
     def com_from_fill(self, fill_prop):
         # calculate center of mass of water bottle
@@ -133,7 +141,8 @@ class Bottle:
         p.changeDynamics(
             bodyUniqueId=self.bottle_id,
             linkIndex=-1,  # no links, -1 refers to bottle base
-            lateralFriction=self.lat_fric
+            lateralFriction=self.lat_fric,
+            spinningFriction=1
         )
 
     def check_is_fallen(self):
@@ -194,7 +203,7 @@ class Arm:
         self.num_joints = self.num_DOF = p.getNumJoints(self.kukaId)
         self.ikSolver = 0  # id of solver algorithm provided by pybullet
 
-        self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
+        self.init_joints = self.default_joint_pose
         self.reset(joint_pose=self.init_joints)
 
     def update_joint_pose(self):
