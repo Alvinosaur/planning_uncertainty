@@ -65,7 +65,7 @@ class Bottle:
         self.fill_prop = fill_prop
         self.bottle_mass = self.mass_from_fill(fill_prop)
         self.center_of_mass = self.com_from_fill(
-            fill_prop) + np.array([0, 0, 0.055])
+            fill_prop) + np.array([0, 0, 0.06])
         self.inertial_shift = self.center_of_mass - self.default_com
         print(self.inertial_shift)
 

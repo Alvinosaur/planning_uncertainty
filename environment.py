@@ -105,8 +105,8 @@ class Environment(object):
 
         # Normal distribution of internal bottle params
         # normal distrib for bottle friction
-        self.min_fric = 0.05
-        self.max_fric = 0.2
+        self.min_fric = 0.02
+        self.max_fric = 0.09
         self.mean_friction = (self.min_fric + self.max_fric) / 2.
         # want min and max to be at 3 std deviations
         self.std_friction = (self.max_fric - self.mean_friction) / 3.

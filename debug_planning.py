@@ -392,7 +392,7 @@ def test_env_params():
     # only mark failure if every single sim of action failed
     fall_proportion_thresh = 1.0
     # iters_per_traj_set = [150, 175, 200]
-    iters_per_traj_set = [50, 100, 200]
+    iters_per_traj_set = [50, 80, 200]
     planner = NaivePlanner(env, xbounds,
                            ybounds, dist_thresh, eps, da_rad=da_rad,
                            dx=dx, dy=dy, dz=dz, use_3D=use_3D, sim_mode=SINGLE, num_rand_samples=1,
@@ -415,11 +415,16 @@ def test_env_params():
                                                     bottle.folder, "cup.obj"),
                                                 meshScale=mesh_scale)
                 fill_props = [0.1, 0.4, 0.7, 1.0]
-                env.bottle.lat_fric = 0.05
-                for fill in fill_props:
+                # frics = [0.02, 0.03, 0.04]
+                # frics = [0.1]  Too high, cap should be < this
+                frics = [0.03, 0.09]  # this is a good cap
+                combos = [(fric, fill)
+                          for fric in frics for fill in fill_props]
+                for fric, fill in combos:
                     env.bottle.set_fill_proportion(fill)
-                    print("Fill: %.2f with mass: %.2f" %
-                          (fill, env.bottle.bottle_mass))
+                    env.bottle.lat_fric = fric
+                    print("Fill: %.2f, fric: %.2f" %
+                          (fill, fric))
 
                     for ai in [0, planner.A.actions_mat.shape[0], 2 * planner.A.actions_mat.shape[0]]:
                         print(ai)
