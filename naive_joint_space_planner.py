@@ -187,7 +187,7 @@ class NaivePlanner():
                 action = self.A.get_action(ai)
 
                 # (state, action) -> (cost, next_state)
-                (is_fallen, next_bottle_pos,
+                (is_fallen, is_collision, next_bottle_pos,
                  next_bottle_ori, next_joint_pose) = self.env.run_sim(
                     action=action, init_joints=cur_joints,
                     bottle_pos=bottle_pos, bottle_ori=bottle_ori)

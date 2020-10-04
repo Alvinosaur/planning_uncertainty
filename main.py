@@ -10,32 +10,41 @@ from naive_joint_space_planner import NaivePlanner
 import experiment_helpers as helpers
 
 
-def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
+def policy_to_full_traj(init_joints, policy):
+    cur_joints = np.copy(init_joints)
+    piecewise_trajs = []
+    for (dq_vec, num_iters) in policy:
+        target_joints = cur_joints + dq_vec
+        traj = np.linspace(
+            start=cur_joints, stop=target_joints, num=num_iters)
+        piecewise_trajs.append(traj)
+        cur_joints = target_joints
+    full_arm_traj = np.vstack(piecewise_trajs)
+    return full_arm_traj
+
+
+def direct_plan_execution(planner: NaivePlanner, env: Environment,
+                          replay_saved=False, visualize=False):
     if not replay_saved:
         state_path, policy = planner.plan()
         np.savez("results", state_path=state_path, policy=policy)
 
     else:
-        results = np.load("results.npz")
+        results = np.load("results.npz", allow_pickle=True)
         policy = results["policy"]
         state_path = results["state_path"]
 
     if visualize:
         # print(policy)
         bottle_pos = planner.bottle_pos_from_state(planner.start)
+        init_joints = planner.joint_pose_from_state(planner.start)
+        env.arm.reset(init_joints)
         bottle_ori = np.array([0, 0, 0, 1])
-        for dq in policy:
-            # run deterministic simulation for now
-            # init_joints not passed-in because current joint state
-            # maintained by simulator
-            # print(bottle_pos)
-            # print(bottle_ori)
-            trans_cost, bottle_pos, bottle_ori, _ = env.run_sim(
-                action=dq, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
-            link_positions = env.arm.get_link_positions()
-            EE_pos = np.array(link_positions[-1])
-            print(EE_pos)
+        full_arm_traj = policy_to_full_traj(init_joints, policy)
+        is_fallen, is_collision, bottle_pos, bottle_ori, joint_pos = (
+            env.simulate_plan(joint_traj=full_arm_traj, bottle_pos=bottle_pos,
+                              bottle_ori=bottle_ori))
 
     elif not visualize and replay_saved:
         print("Trying to playback plan without visualizing!")
@@ -50,7 +59,7 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = False
+    REPLAY_RESULTS = True
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:

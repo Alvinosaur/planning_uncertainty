@@ -232,11 +232,7 @@ class Environment(object):
         bottle_vert_stopped = False
         bottle_horiz_stopped = False
         bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped
-
-        # iterate through action
-        pos_change = 0  # init arbitrary
-        thresh = 0.001
-        EE_error = 0
+        is_collision = False
 
         iter = 0
         traj_len = joint_traj.shape[0]
@@ -253,6 +249,10 @@ class Environment(object):
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
+
+            contacts = p.getContactPoints(
+                self.arm.kukaId, self.bottle.bottle_id)
+            is_collision |= (len(contacts) > 0)
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
@@ -285,14 +285,11 @@ class Environment(object):
         is_fallen = self.bottle.check_is_fallen()
         bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
             self.bottle.bottle_id)
-        final_arm_pos = np.array(p.getLinkState(
-            self.arm.kukaId, self.arm.EE_idx)[4])
-        EE_move_dist = np.linalg.norm(final_arm_pos[:3] - init_arm_pos[:3])
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return is_fallen, bottle_pos, bottle_ori, self.arm.joint_pose
+        return is_fallen, is_collision, bottle_pos, bottle_ori, self.arm.joint_pose
 
     @staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
