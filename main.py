@@ -100,7 +100,7 @@ def main():
     # if  the below isn't true, you're expecting bottle to fall in exactly
     # the same state bin as the goal
     assert(dist_thresh <= dx)
-    eps = 2
+    eps = 5
     da_rad = 8 * math.pi / 180.0
 
     # run planner and visualize result

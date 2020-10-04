@@ -12,27 +12,42 @@ from sim_objects import Arm, Bottle
 
 class ActionSpace():
     """Action space defined by incremental changes to individual joints.
-    These include positive and negative offsets as well as no change to any joint.
+    These include positive and negative offsets and no-change if specified
     """
     default_da_rad = 5.0 * math.pi / 180.0  # default 5 degrees offsets
 
-    def __init__(self, num_DOF, da_rad=default_da_rad):
+    def __init__(self, num_DOF, da_rad=default_da_rad, include_no_change=False,
+                 ignore_last_joint=True):
         self.num_DOF = num_DOF
         self.da_rad = da_rad
+        # self.traj_iter_set = [100, 150, 200]
+        self.traj_iter_set = [200]
 
         pos_moves = np.eye(N=num_DOF) * da_rad
         neg_moves = np.eye(N=num_DOF) * -da_rad
         no_change = np.zeros((1, num_DOF))
-        self.actions_mat = np.vstack([
-            no_change, pos_moves, neg_moves
-        ])
-        self.num_actions = self.actions_mat.shape[0]
+
+        if ignore_last_joint:
+            pos_moves = pos_moves[:-1, :]
+            neg_moves = neg_moves[:-1, :]
+
+        if include_no_change:
+            self.actions_mat = np.vstack([
+                no_change, pos_moves, neg_moves
+            ])
+        else:
+            self.actions_mat = np.vstack([
+                pos_moves, neg_moves
+            ])
+        self.num_actions = self.actions_mat.shape[0] * len(self.traj_iter_set)
         self.action_ids = list(range(self.num_actions))
 
     def get_action(self, id):
         assert(isinstance(id, int))
-        assert(0 <= id < self.num_actions)
-        return self.actions_mat[id, :]
+        assert (0 <= id < self.num_actions)
+        dq_i = id % self.actions_mat.shape[0]
+        num_iters = self.traj_iter_set[int(id / self.actions_mat.shape[0])]
+        return (self.actions_mat[dq_i, :], num_iters)
 
 
 class Environment(object):
@@ -185,9 +200,10 @@ class Environment(object):
         if init_joints is None:  # use arm's current joint state
             init_joints = self.arm.joint_pose
 
-        target_joint_pose = init_joints + action
+        dq, num_iters = action
+        target_joint_pose = init_joints + dq
         joint_traj = np.linspace(init_joints,
-                                 target_joint_pose, num=self.min_iters)
+                                 target_joint_pose, num=num_iters)
 
         return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
@@ -223,19 +239,17 @@ class Environment(object):
         EE_error = 0
 
         iter = 0
-        while iter < self.min_iters or (iter < self.max_iters and not bottle_stopped):
+        traj_len = joint_traj.shape[0]
+        while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
-            if iter < self.min_iters:
-                next_joint_pose = joint_traj[iter, :]
-                for ji, jval in enumerate(next_joint_pose):
-                    p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
-                                            jointIndex=ji,
-                                            controlMode=p.POSITION_CONTROL,
-                                            targetPosition=jval,
-                                            targetVelocity=0,
-                                            force=self.arm.force,
-                                            positionGain=self.arm.position_gain,
-                                            velocityGain=self.arm.velocity_gain)
+            next_joint_pose = joint_traj[iter, :]
+            for ji, jval in enumerate(next_joint_pose):
+                p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
+                                        jointIndex=ji,
+                                        controlMode=p.POSITION_CONTROL,
+                                        targetPosition=jval,
+                                        force=self.arm.force,
+                                        positionGain=self.arm.position_gain)
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()

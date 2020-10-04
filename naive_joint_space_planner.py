@@ -59,8 +59,10 @@ while state != start:
 
 class Node(object):
     def __init__(self, cost, state, nearest_arm_pos_i, nearest_arm_pos,
-                 bottle_ori=np.array([0, 0, 0, 1])):
+                 bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0):
         self.cost = cost
+        self.g = g
+        self.h = h
         self.state = state
         self.bottle_ori = bottle_ori
         self.nearest_arm_pos_i = nearest_arm_pos_i
@@ -161,6 +163,10 @@ class NaivePlanner():
                                   np.array([0, 0, 1]),
                                   lineColorRGB=[1, 0, 0], lineWidth=1,
                                   lifeTime=5)
+            Environment.draw_line(lineFrom=bottle_pos,
+                                  lineTo=bottle_pos + np.array([0.5, 0, 0]),
+                                  lineColorRGB=[0, 1, 0], lineWidth=1,
+                                  lifeTime=0)
             print(n)
             if state_key in closed_set:
                 continue
@@ -178,12 +184,12 @@ class NaivePlanner():
             # explore all actions from this state
             for ai in self.A.action_ids:
                 # action defined as an offset of joint angles of arm
-                dq = self.A.get_action(ai)
+                action = self.A.get_action(ai)
 
                 # (state, action) -> (cost, next_state)
                 (is_fallen, next_bottle_pos,
                  next_bottle_ori, next_joint_pose) = self.env.run_sim(
-                    action=dq, init_joints=cur_joints,
+                    action=action, init_joints=cur_joints,
                     bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
                 new_arm_positions = self.env.arm.get_joint_link_positions(
@@ -202,24 +208,28 @@ class NaivePlanner():
 
                 arm_bottle_dist, nn_joint_i, nn_joint_pos = (
                     self.dist_arm_to_bottle(next_state, new_arm_positions))
-                f = self.heuristic(next_state, arm_bottle_dist)
+                h = self.heuristic(next_state, arm_bottle_dist)
                 new_G = cur_cost + trans_cost
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
-                    overall_cost = new_G + self.eps * f
-                    # print("Trans, heuristic change: %.3f, %.3f" % (
-                    #     trans_cost, self.heuristic(state) - self.heuristic(next_state)))
+                    overall_cost = new_G + self.eps * h
+
+                    del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
+                    print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
+                        trans_cost,
+                        del_h,
+                        self.eps * del_h))
 
                     # add to open set
                     heapq.heappush(open_set, Node(
                         cost=overall_cost,
+                        g=new_G, h=h,
                         state=next_state,
                         nearest_arm_pos_i=nn_joint_i,
                         nearest_arm_pos=nn_joint_pos,
                         bottle_ori=next_bottle_ori))
-                    # print(overall_cost, f)
 
                     # build directed graph
                     transitions[next_state_key] = (state_key, ai)
