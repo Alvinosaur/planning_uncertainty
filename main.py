@@ -2,10 +2,12 @@ import pybullet as p
 import pybullet_data
 import math
 import numpy as np
+import pickle
 
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace
 from naive_joint_space_planner import NaivePlanner
+import experiment_helpers as helpers
 
 
 def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
@@ -31,6 +33,10 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
             trans_cost, bottle_pos, bottle_ori, _ = env.run_sim(
                 action=dq, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
+            link_positions = env.arm.get_link_positions()
+            EE_pos = np.array(link_positions[-1])
+            print(EE_pos)
+
     elif not visualize and replay_saved:
         print("Trying to playback plan without visualizing!")
         exit()
@@ -44,7 +50,7 @@ def direct_plan_execution(planner, env, replay_saved=False, visualize=False):
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = True
+    REPLAY_RESULTS = False
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
@@ -89,13 +95,12 @@ def main():
               kukaId=kukaId)
     start_joints = arm.joint_pose
 
-    N = 500
-    env = Environment(arm, bottle, is_viz=VISUALIZE, N=N)
+    env = Environment(arm, bottle, is_viz=VISUALIZE)
     start = np.concatenate(
         [bottle_start_pos, start_joints])
     # goal joints are arbitrary and populated later in planner
     goal = np.concatenate(
-        [bottle_goal_pos, [0]*arm.num_joints])
+        [bottle_goal_pos, [0] * arm.num_joints])
     xbounds = [-0.4, -0.9]
     ybounds = [-0.1, -0.9]
     dx = dy = dz = 0.1
@@ -104,14 +109,32 @@ def main():
     # the same state bin as the goal
     assert(dist_thresh <= dx)
     eps = 2
-    da_rad = 8*math.pi/180.0
+    da_rad = 8 * math.pi / 180.0
 
     # run planner and visualize result
     planner = NaivePlanner(start, goal, env, xbounds,
                            ybounds, dist_thresh, eps, da_rad=da_rad,
                            dx=dx, dy=dy, dz=dz)
-    direct_plan_execution(
-        planner, env, replay_saved=REPLAY_RESULTS, visualize=VISUALIZE)
+
+    save_new_start_goals = False
+    if save_new_start_goals:
+        start_goals = helpers.generate_random_start_goals(
+            arm=arm, bottle=bottle, num_pairs=50)
+        with open("start_goals.obj", "wb") as f:
+            pickle.dump(start_goals, f)
+    else:
+        with open("start_goals.obj", "rb") as f:
+            start_goals = pickle.load(f)
+
+    for (startb, goalb, start_EE) in start_goals:
+        start_state = helpers.bottle_EE_to_state(
+            bpos=startb, arm=arm, EE_pos=start_EE)
+        goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
+        planner.start = start_state
+        planner.goal = goal_state
+
+        direct_plan_execution(
+            planner, env, replay_saved=REPLAY_RESULTS, visualize=VISUALIZE)
     # s1 = np.array([-0.50, -0.50, 0.04, 0.00, 0.00, -0.00, 1.00,
     #                0.51, 2.09, -0.11, 0.45, -0.14, 2.08, -0.91])
     # s2 = np.array([-0.50, -0.50, 0.04, -0.00, 0.00, -0.00, 1.00,

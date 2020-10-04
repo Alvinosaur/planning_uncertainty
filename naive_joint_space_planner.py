@@ -58,10 +58,13 @@ while state != start:
 
 
 class Node(object):
-    def __init__(self, cost, state, bottle_ori=np.array([0, 0, 0, 1])):
+    def __init__(self, cost, state, nearest_arm_pos_i, nearest_arm_pos,
+                 bottle_ori=np.array([0, 0, 0, 1])):
         self.cost = cost
         self.state = state
         self.bottle_ori = bottle_ori
+        self.nearest_arm_pos_i = nearest_arm_pos_i
+        self.nearest_arm_pos = nearest_arm_pos
 
     def __lt__(self, other):
         return self.cost < other.cost
@@ -74,7 +77,7 @@ class Node(object):
 
 class NaivePlanner():
 
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15*math.pi/180.0):
+    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -92,6 +95,7 @@ class NaivePlanner():
         self.num_joints = env.arm.num_joints
         self.A = ActionSpace(num_DOF=self.num_joints, da_rad=self.da)
         self.G = dict()
+        self.use_EE = False
 
         # discretize continuous state/action space
         self.xi_bounds = (
@@ -112,7 +116,14 @@ class NaivePlanner():
 
     def plan(self):
         # initialize open set with start and G values
-        open_set = [Node(0, self.start)]
+        arm_positions = self.env.arm.get_joint_link_positions(
+            self.joint_pose_from_state(self.start))
+        _, nn_joint_i, nn_joint_pos = (
+            self.dist_arm_to_bottle(self.start, arm_positions))
+        open_set = [
+            Node(0, self.start,
+                 nearest_arm_pos_i=nn_joint_i,
+                 nearest_arm_pos=nn_joint_pos)]
         closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
@@ -133,7 +144,7 @@ class NaivePlanner():
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
-            # print(n)
+            print(n)
             # print("Heuristic: %.2f" % self.heuristic(n.state))
             # self.debug_view_state(state)
             # print(n)
@@ -161,13 +172,17 @@ class NaivePlanner():
                 dq = self.A.get_action(ai)
 
                 # (state, action) -> (cost, next_state)
-                (trans_cost, next_bottle_pos,
+                (is_fallen, next_bottle_pos,
                  next_bottle_ori, next_joint_pose) = self.env.run_sim(
                     action=dq, init_joints=cur_joints,
                     bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
+                new_arm_positions = self.env.arm.get_joint_link_positions(
+                    next_joint_pose)
+                trans_cost = self.calc_trans_cost(n, new_arm_positions)
+
                 # completely ignore actions that knock over bottle
-                if self.is_invalid_transition(trans_cost):
+                if is_fallen:
                     continue
 
                 # build next state and check if already expanded
@@ -176,7 +191,9 @@ class NaivePlanner():
                 if next_state_key in closed_set:  # if already expanded, skip
                     continue
 
-                f = self.heuristic(next_state)
+                arm_bottle_dist, nn_joint_i, nn_joint_pos = (
+                    self.dist_arm_to_bottle(next_state, new_arm_positions))
+                f = self.heuristic(next_state, arm_bottle_dist)
                 new_G = cur_cost + trans_cost
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
@@ -188,7 +205,11 @@ class NaivePlanner():
 
                     # add to open set
                     heapq.heappush(open_set, Node(
-                        cost=overall_cost, state=next_state, bottle_ori=next_bottle_ori))
+                        cost=overall_cost,
+                        state=next_state,
+                        nearest_arm_pos_i=nn_joint_i,
+                        nearest_arm_pos=nn_joint_pos,
+                        bottle_ori=next_bottle_ori))
                     # print(overall_cost, f)
 
                     # build directed graph
@@ -214,33 +235,32 @@ class NaivePlanner():
         policy.reverse()
         return planned_path, policy
 
-    def dist_arm_to_bottle(self, bottle_pos, joint_pose):
+    def dist_arm_to_bottle(self, state, positions):
+        bottle_pos = self.bottle_pos_from_state(state)
         bottle_pos = bottle_pos + self.env.bottle.center_of_mass
-        bx, by, bz = bottle_pos
-        self.env.arm.reset(joint_pose)
-        link_positions = self.env.arm.get_link_positions()
-        # don't consider base link position since doens't move
-        # print("(%.2f, %.2f, %.2f), (%.2f, %.2f, %.2f)" % (
-        #     link_positions[0][0], link_positions[0][1], link_positions[0][2], link_positions[1][0], link_positions[1][1], link_positions[1][2]))
-        # link_positions = link_positions[2:]
-        # min_sq_dist = None
-        # for (lx, ly, lz) in link_positions:
-        #     sq_dist = (bx - lx) ** 2 + (by - ly) ** 2
-        #     if min_sq_dist is None or sq_dist < min_sq_dist:
-        #         min_sq_dist = sq_dist
-        # # print(math.sqrt(min_sq_dist))
-        # return math.sqrt(min_sq_dist)
-        EE_pos = np.array(link_positions[-1])
-        ee_link_dist = np.linalg.norm(bottle_pos[:2] - EE_pos[:2])
-        return ee_link_dist
 
-    def heuristic(self, state):
+        min_dist = None
+        min_i = 0
+        min_pos = None
+        for i, pos in enumerate(positions):
+            dist = np.linalg.norm(np.array(pos) - bottle_pos)
+            if min_dist is None or dist < min_dist:
+                min_dist = dist
+                min_i = i
+                min_pos = pos
+        return min_dist, min_i, min_pos
+
+    def calc_trans_cost(self, n: Node, new_arm_positions):
+        prev_nearest_ji = n.nearest_arm_pos_i
+        prev_nearest_j = np.array(n.nearest_arm_pos)
+        new_nearest_j = np.array(new_arm_positions[prev_nearest_ji])
+        dist_traveled = np.linalg.norm(prev_nearest_j - new_nearest_j)
+        return dist_traveled
+
+    def heuristic(self, state, dist_arm_to_bottle):
         bottle_pos = np.array(self.bottle_pos_from_state(state))
         goal_bottle_pos = np.array(self.bottle_pos_from_state(self.goal))
         dist_to_goal = np.linalg.norm(bottle_pos[:2] - goal_bottle_pos[:2])
-        joints = self.joint_pose_from_state(state)
-        dist_arm_to_bottle = self.dist_arm_to_bottle(bottle_pos, joints)
-        # print("BG: %.2f, EB: %.2f" % (dist_to_goal, dist_arm_to_bottle))
         return dist_to_goal + dist_arm_to_bottle
 
     def reached_goal(self, state):
@@ -268,7 +288,7 @@ class NaivePlanner():
         # if out_of_bounds:
         #     return None
 
-    @staticmethod
+    @ staticmethod
     def is_invalid_transition(trans_cost):
         return trans_cost == Environment.INF
 
@@ -279,6 +299,11 @@ class NaivePlanner():
     @ staticmethod
     def joint_pose_from_state(state):
         return state[3:]
+
+    @ staticmethod
+    def state_to_str(state):
+        s = ", ".join(["%.2f" % val for val in state])
+        return s
 
 
 def test_state_indexing():

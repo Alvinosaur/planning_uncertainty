@@ -4,7 +4,7 @@ import pybullet as p
 from scipy.spatial.transform import Rotation as R
 
 PI = math.pi
-TWO_PI = 2*math.pi
+TWO_PI = 2 * math.pi
 
 # water bottle
 
@@ -35,7 +35,7 @@ class Bottle:
         self.bottle_mass = None
         self.inertial_shift = None
         self.center_of_mass = None
-        self.default_com = np.array([0, 0, self.height/2])
+        self.default_com = np.array([0, 0, self.height / 2])
         self.set_fill_proportion(fill_prop)
 
         self.col_id = p.createCollisionShape(
@@ -109,7 +109,9 @@ class Arm:
         self.kukaId = kukaId
         self.base_pos = np.array([0, 0, 0.1])
         self.min_dist = 0.3
-        self.MAX_REACH = None  # need to set with set_general_max_reach()
+        self.MAX_HORIZ_REACH = 0.851  # need to set with set_general_max_reach()
+        self.default_joint_pose = np.array(
+            [0, math.pi / 2, math.pi / 2, 0, 0, 0, 0])
 
         # NOTE: taken from example:
         # https://github.com/bulletphysics/bullet3/blob/master/examples/pybullet/examples/inverse_kinematics.py
@@ -123,12 +125,13 @@ class Arm:
         self.jr = np.array([5.8, 4, 5.8, 4, 5.8, 4, 6])
         # restposes for null space
         # self.rp = [0, 0, 0, 0.5 * math.pi, 0, -math.pi * 0.5 * 0.66, 0]
-        self.rp = np.array([math.pi/4, (90 + 15)*math.pi/180, 0, 0, 0, 0, 0])
+        self.rp = np.array(
+            [math.pi / 4, (90 + 15) * math.pi / 180, 0, 0, 0, 0, 0])
         # joint damping coefficents
         self.jd = [0.1, 0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
         self.force = 500  # allow instantenous velocity = target velocity
-        self.max_vel = 2*math.pi/16  # angular velocity
+        self.max_vel = 2 * math.pi / 16  # angular velocity
         self.rot_vel = self.max_vel
 
         # may possibly change the below params to be part of action space
@@ -153,9 +156,27 @@ class Arm:
         joint_states = p.getJointStates(self.kukaId, range(self.num_joints))
         self.joint_pose = np.array([state[0] for state in joint_states])
 
-    def get_link_positions(self):
+    def get_link_positions(self, joint_pose=None):
+        if joint_pose is not None:
+            self.reset(joint_pose)
         link_states = p.getLinkStates(self.kukaId, range(self.num_joints))
         return [state[4] for state in link_states]
+
+    def get_joint_link_positions(self, joint_pose=None, start_i=3, end_i=-1):
+        # By default ignore the first 3 joints since will not be able to
+        # interact with bottle
+        joint_positions = self.get_link_positions(joint_pose)
+        joint_positions = joint_positions[start_i:end_i]
+        midpoints = []
+        # only calculate midpoint btwn last static and 1st dynamic
+        for i in range(len(joint_positions) - 1):
+            midpoint = np.mean(np.array([
+                joint_positions[i],
+                joint_positions[i + 1]]), axis=0)
+            midpoints.append(midpoint)
+        # ignore first two links, which are static
+        positions = joint_positions + midpoints
+        return positions
 
     def reset(self, joint_pose):
         self.joint_pose = joint_pose
@@ -219,7 +240,7 @@ class Arm:
             jointRanges=self.jr.tolist(),
             restPoses=self.rp.tolist())
         # joint_poses = np.clip(joint_poses, self.ll, self.ul)
-        orn = p.getQuaternionFromEuler([-math.pi/2, 0, angle-math.pi/2])
+        orn = p.getQuaternionFromEuler([-math.pi / 2, 0, angle - math.pi / 2])
         # joint_poses = list(p.calculateInverseKinematics(
         #     self.kukaId,
         #     self.EE_idx,

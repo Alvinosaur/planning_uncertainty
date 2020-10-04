@@ -45,7 +45,7 @@ class Environment(object):
     SIM_AVG = 0
     SIM_MOST_COMMON = 1
 
-    def __init__(self, arm, bottle, is_viz=True, N=500):
+    def __init__(self, arm, bottle, is_viz=True):
         # store arm and objects
         self.arm = arm
         self.bottle = bottle
@@ -53,7 +53,7 @@ class Environment(object):
         # simulation visualization params
         self.is_viz = is_viz
         self.trail_dur = 1  # length of visulizing arm trajectory
-        self.SIM_VIZ_FREQ = 1/240.
+        self.SIM_VIZ_FREQ = 1 / 240.
 
         # simulation run params
         # if no object moves more than this thresh, terminate sim early
@@ -84,7 +84,7 @@ class Environment(object):
         # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
 
         # any step incurs penalty of 1, but if falls, extra huge penalty
-        return max(ee_move_dist, self.FALL_COST*is_fallen)
+        return max(ee_move_dist, self.FALL_COST * is_fallen)
 
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
@@ -274,12 +274,11 @@ class Environment(object):
         final_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
         EE_move_dist = np.linalg.norm(final_arm_pos[:3] - init_arm_pos[:3])
-        cost = self.eval_cost(is_fallen, bottle_pos, EE_move_dist)
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return cost, bottle_pos, bottle_ori, self.arm.joint_pose
+        return is_fallen, bottle_pos, bottle_ori, self.arm.joint_pose
 
     @staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
