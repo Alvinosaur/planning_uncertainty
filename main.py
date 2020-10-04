@@ -76,14 +76,6 @@ def main():
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
-    if VISUALIZE:
-        # visualize a vertical blue line representing goal pos of bottle
-        vertical_offset = np.array([0, 0, 0.5])  # just to make line vertical
-        Environment.draw_line(lineFrom=bottle_goal_pos,
-                              lineTo=bottle_goal_pos + vertical_offset,
-                              lineColorRGB=[0, 0, 1], lineWidth=1,
-                              lifeTime=0)
-
     # starting end-effector pos, not base pos
     # NOTE: just temporarily setting arm to starting bottle position with some offset
     # offset = -np.array([0.05, 0, 0])
@@ -114,7 +106,7 @@ def main():
     # run planner and visualize result
     planner = NaivePlanner(start, goal, env, xbounds,
                            ybounds, dist_thresh, eps, da_rad=da_rad,
-                           dx=dx, dy=dy, dz=dz)
+                           dx=dx, dy=dy, dz=dz, visualize=VISUALIZE)
 
     save_new_start_goals = False
     if save_new_start_goals:

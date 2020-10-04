@@ -77,7 +77,7 @@ class Node(object):
 
 class NaivePlanner():
 
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0):
+    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, visualize=False):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -96,14 +96,15 @@ class NaivePlanner():
         self.A = ActionSpace(num_DOF=self.num_joints, da_rad=self.da)
         self.G = dict()
         self.use_EE = False
+        self.guided_direction = True
 
         # discretize continuous state/action space
         self.xi_bounds = (
             (self.xbounds - self.xbounds[0]) / self.dx).astype(int)
         self.yi_bounds = (
             (self.ybounds - self.ybounds[0]) / self.dy).astype(int)
-        # self.max_joint_indexes = (
-        #     (self.env.arm.ul - self.env.arm.ll) / self.A.da_rad).astype(int)
+
+        self.visualize = visualize
 
     def debug_view_state(self, state):
         joint_pose = self.joint_pose_from_state(state)
@@ -129,6 +130,16 @@ class NaivePlanner():
         self.G[self.state_to_key(self.start)] = 0
         transitions = dict()
 
+        if self.visualize:
+            # visualize a vertical blue line representing goal pos of bottle
+            # just to make line vertical
+            vertical_offset = np.array([0, 0, 0.5])
+            goal_bpos = self.bottle_pos_from_state(self.goal)
+            Environment.draw_line(lineFrom=goal_bpos,
+                                  lineTo=goal_bpos + vertical_offset,
+                                  lineColorRGB=[0, 0, 1], lineWidth=1,
+                                  lifeTime=0)
+
         # metrics on performance of planner
         num_expansions = 0
 
@@ -144,16 +155,14 @@ class NaivePlanner():
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
+            guided_bottle_pos = self.get_guided_bottle_pos(bottle_pos)
+            Environment.draw_line(lineFrom=guided_bottle_pos,
+                                  lineTo=guided_bottle_pos +
+                                  np.array([0, 0, 1]),
+                                  lineColorRGB=[1, 0, 0], lineWidth=1,
+                                  lifeTime=5)
             print(n)
-            # print("Heuristic: %.2f" % self.heuristic(n.state))
-            # self.debug_view_state(state)
-            # print(n)
-
-            # duplicates are possible since heapq doesn't handle same state but diff costs
-            # print(state_key)
-            # print(state[:3])
             if state_key in closed_set:
-                print("avoid re-expanding closed state: %s" % n)
                 continue
             closed_set.add(state_key)
 
@@ -235,9 +244,22 @@ class NaivePlanner():
         policy.reverse()
         return planned_path, policy
 
+    def get_guided_bottle_pos(self, bpos, dist_offset=0.1):
+        new_bpos = np.copy(bpos)
+        goal_pos = self.bottle_pos_from_state(self.goal)
+        vec_cur_to_goal = (goal_pos[:2] - new_bpos[:2])
+        vec_cur_to_goal /= np.linalg.norm(vec_cur_to_goal)
+        # [dx, dy] offset opposite of direction from bottle to goal
+        new_bpos[:2] -= dist_offset * vec_cur_to_goal
+        return new_bpos
+
     def dist_arm_to_bottle(self, state, positions):
         bottle_pos = self.bottle_pos_from_state(state)
         bottle_pos = bottle_pos + self.env.bottle.center_of_mass
+
+        # fake bottle position to be behind bottle in the direction towards the goal
+        if self.guided_direction:
+            bottle_pos = self.get_guided_bottle_pos(bottle_pos)
 
         min_dist = None
         min_i = 0
