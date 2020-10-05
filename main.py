@@ -61,8 +61,8 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = True
-    LOGGING = False
+    REPLAY_RESULTS = False
+    LOGGING = True
     GRAVITY = -9.81
     if VISUALIZE:
         p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -75,7 +75,7 @@ def main():
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
-            p.STATE_LOGGING_VIDEO_MP4, "cool.mp4")
+            p.STATE_LOGGING_VIDEO_MP4, "initial_start_goal_configurations.mp4")
 
     # bottle
     # bottle_start_pos = np.array(
@@ -131,7 +131,7 @@ def main():
             # print(start_goals)
 
     for i, (startb, goalb, start_EE) in enumerate(start_goals):
-        if not i >= 2:
+        if not i >= 0:
             continue
 
         start_state = helpers.bottle_EE_to_state(
@@ -140,11 +140,15 @@ def main():
         planner.start = start_state
         planner.goal = goal_state
 
-        direct_plan_execution(planner, env,
-                              replay_saved=REPLAY_RESULTS,
-                              visualize=VISUALIZE,
-                              res_fname="results_%d" % i)
-        print("FOUND PLAN FOR %d" % i)
+        try:
+            with helpers.time_limit(2):
+                direct_plan_execution(planner, env,
+                                      replay_saved=REPLAY_RESULTS,
+                                      visualize=VISUALIZE,
+                                      res_fname="results_%d" % i)
+                print("FOUND PLAN FOR %d" % i)
+        except helpers.TimeoutException:
+            print('continue')
 
 
 if __name__ == "__main__":

@@ -137,10 +137,12 @@ class NaivePlanner():
             # just to make line vertical
             vertical_offset = np.array([0, 0, 0.5])
             goal_bpos = self.bottle_pos_from_state(self.goal)
-            Environment.draw_line(lineFrom=goal_bpos,
-                                  lineTo=goal_bpos + vertical_offset,
-                                  lineColorRGB=[0, 0, 1], lineWidth=1,
-                                  lifeTime=0)
+            self.env.goal_line_id = self.env.draw_line(
+                lineFrom=goal_bpos,
+                lineTo=goal_bpos + vertical_offset,
+                lineColorRGB=[0, 0, 1], lineWidth=1,
+                replaceItemUniqueId=self.env.goal_line_id,
+                lifeTime=0)
 
         # metrics on performance of planner
         num_expansions = 0
@@ -158,15 +160,14 @@ class NaivePlanner():
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
             guided_bottle_pos = self.get_guided_bottle_pos(bottle_pos)
-            Environment.draw_line(lineFrom=guided_bottle_pos,
-                                  lineTo=guided_bottle_pos +
-                                  np.array([0, 0, 1]),
-                                  lineColorRGB=[1, 0, 0], lineWidth=1,
-                                  lifeTime=5)
-            Environment.draw_line(lineFrom=bottle_pos,
-                                  lineTo=bottle_pos + np.array([0.5, 0, 0]),
-                                  lineColorRGB=[0, 1, 0], lineWidth=1,
-                                  lifeTime=0)
+
+            if self.visualize:
+                self.env.target_line_id = self.env.draw_line(
+                    lineFrom=guided_bottle_pos,
+                    lineTo=guided_bottle_pos + np.array([0, 0, 1]),
+                    lineColorRGB=[1, 0, 0], lineWidth=1,
+                    replaceItemUniqueId=self.env.target_line_id,
+                    lifeTime=10)
             print(n)
             if state_key in closed_set:
                 continue
@@ -216,11 +217,11 @@ class NaivePlanner():
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * h
 
-                    # del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
-                    # print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
-                    #     trans_cost,
-                    #     del_h,
-                    #     self.eps * del_h))
+                    del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
+                    print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
+                        trans_cost,
+                        del_h,
+                        self.eps * del_h))
 
                     # add to open set
                     heapq.heappush(open_set, Node(
@@ -275,7 +276,9 @@ class NaivePlanner():
         min_i = 0
         min_pos = None
         for i, pos in enumerate(positions):
-            dist = np.linalg.norm(np.array(pos) - bottle_pos)
+            horiz_scale = np.array([2, 2, 1])
+            diff = horiz_scale * (np.array(pos) - bottle_pos)
+            dist = np.linalg.norm(diff)
             if min_dist is None or dist < min_dist:
                 min_dist = dist
                 min_i = i

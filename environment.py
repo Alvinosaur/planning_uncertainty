@@ -69,6 +69,8 @@ class Environment(object):
         self.is_viz = is_viz
         self.trail_dur = 1  # length of visulizing arm trajectory
         self.SIM_VIZ_FREQ = 1 / 240.
+        self.goal_line_id = None
+        self.target_line_id = None
 
         # simulation run params
         # if no object moves more than this thresh, terminate sim early
@@ -292,8 +294,14 @@ class Environment(object):
         return is_fallen, is_collision, bottle_pos, bottle_ori, self.arm.joint_pose
 
     @staticmethod
-    def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime):
-        p.addUserDebugLine(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime)
+    def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime,
+                  replaceItemUniqueId=None):
+        if replaceItemUniqueId is not None:
+            return p.addUserDebugLine(lineFrom, lineTo, lineColorRGB,
+                                      lineWidth, lifeTime, replaceItemUniqueId=replaceItemUniqueId)
+        else:
+            return p.addUserDebugLine(lineFrom, lineTo, lineColorRGB,
+                                      lineWidth, lifeTime)
 
     @staticmethod
     def avg_quaternion(quaternions):

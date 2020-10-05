@@ -21,6 +21,7 @@ class Bottle:
         self.start_pos = start_pos
         self.start_ori = start_ori
         self.col_id = None
+        self.bottle_id = None
 
         self.max_volume = 16.9      # fl-oz
         self.radius = 0.03175    # m
@@ -64,6 +65,8 @@ class Bottle:
             return np.array([0, 0, water_height * 0.4])
 
     def create_sim_bottle(self, pos=None, ori=None):
+        if self.bottle_id is not None:
+            p.removeBody(self.bottle_id)
         if ori is None:
             ori = [0, 0, 0, 1]
         if pos is not None:
