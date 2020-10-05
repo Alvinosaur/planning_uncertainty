@@ -24,13 +24,15 @@ def policy_to_full_traj(init_joints, policy):
 
 
 def direct_plan_execution(planner: NaivePlanner, env: Environment,
-                          replay_saved=False, visualize=False):
+                          replay_saved=False, visualize=False,
+                          res_fname="results"):
     if not replay_saved:
         state_path, policy = planner.plan()
-        np.savez("results", state_path=state_path, policy=policy)
+        np.savez("results/%s" % res_fname,
+                 state_path=state_path, policy=policy)
 
     else:
-        results = np.load("results.npz", allow_pickle=True)
+        results = np.load("results/%s.npz" % res_fname, allow_pickle=True)
         policy = results["policy"]
         state_path = results["state_path"]
 
@@ -126,22 +128,23 @@ def main():
     else:
         with open("start_goals.obj", "rb") as f:
             start_goals = pickle.load(f)
+            # print(start_goals)
 
-    for (startb, goalb, start_EE) in start_goals:
+    for i, (startb, goalb, start_EE) in enumerate(start_goals):
+        if not i >= 2:
+            continue
+
         start_state = helpers.bottle_EE_to_state(
             bpos=startb, arm=arm, EE_pos=start_EE)
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
 
-        direct_plan_execution(
-            planner, env, replay_saved=REPLAY_RESULTS, visualize=VISUALIZE)
-    # s1 = np.array([-0.50, -0.50, 0.04, 0.00, 0.00, -0.00, 1.00,
-    #                0.51, 2.09, -0.11, 0.45, -0.14, 2.08, -0.91])
-    # s2 = np.array([-0.50, -0.50, 0.04, -0.00, 0.00, -0.00, 1.00,
-    #                0.51, 2.09, -0.11, 0.46, -0.14, 2.08, -0.93])
-    # print(planner.state_to_key(s1))
-    # print(planner.state_to_key(s2))
+        direct_plan_execution(planner, env,
+                              replay_saved=REPLAY_RESULTS,
+                              visualize=VISUALIZE,
+                              res_fname="results_%d" % i)
+        print("FOUND PLAN FOR %d" % i)
 
 
 if __name__ == "__main__":

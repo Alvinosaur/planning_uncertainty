@@ -216,11 +216,11 @@ class NaivePlanner():
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * h
 
-                    del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
-                    print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
-                        trans_cost,
-                        del_h,
-                        self.eps * del_h))
+                    # del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
+                    # print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
+                    #     trans_cost,
+                    #     del_h,
+                    #     self.eps * del_h))
 
                     # add to open set
                     heapq.heappush(open_set, Node(
