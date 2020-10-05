@@ -116,7 +116,7 @@ def main():
     save_new_start_goals = False
     if save_new_start_goals:
         start_goals = helpers.generate_random_start_goals(
-            arm=arm, bottle=bottle, num_pairs=50)
+            env=env, bottle=bottle, num_pairs=50)
         with open("start_goals.obj", "wb") as f:
             pickle.dump(start_goals, f)
     else:
@@ -125,28 +125,24 @@ def main():
             # print(start_goals)
 
     filtered_start_goals = []
-    for i, (startb, goalb, start_EE) in enumerate(start_goals):
+    for i, (startb, goalb, start_joints) in enumerate(start_goals):
         if not i >= 0:
             continue
 
         start_state = helpers.bottle_EE_to_state(
-            bpos=startb, arm=arm, EE_pos=start_EE)
+            bpos=startb, arm=arm, joints=start_joints)
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
-        direct_plan_execution(planner, env,
-                              replay_saved=REPLAY_RESULTS,
-                              visualize=VISUALIZE,
-                              res_fname="results_%d" % i)
 
         try:
-            with helpers.time_limit(30):
+            with helpers.time_limit(2):
                 direct_plan_execution(planner, env,
                                       replay_saved=REPLAY_RESULTS,
                                       visualize=VISUALIZE,
                                       res_fname="results_%d" % i)
                 print("FOUND PLAN FOR %d" % i)
-                filtered_start_goals.append((startb, goalb, start_EE))
+                filtered_start_goals.append((startb, goalb, start_joints))
         except helpers.TimeoutException:
             print('Timed out!')
 

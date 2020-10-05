@@ -168,8 +168,7 @@ class NaivePlanner():
                     lineColorRGB=[1, 0, 0], lineWidth=1,
                     replaceItemUniqueId=self.env.target_line_id,
                     lifeTime=10)
-            # print(n)
-            print("Adding to closed: ", state_key)
+            print(n)
             if state_key in closed_set:
                 continue
             closed_set.add(state_key)
@@ -200,14 +199,12 @@ class NaivePlanner():
 
                 # completely ignore actions that knock over bottle
                 if is_fallen:
-                    print('fallen!')
                     continue
 
                 # build next state and check if already expanded
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
                 if next_state_key in closed_set:  # if already expanded, skip
-                    print("in closed set?: ", next_state_key)
                     continue
 
                 arm_bottle_dist, nn_joint_i, nn_joint_pos = (
@@ -216,10 +213,10 @@ class NaivePlanner():
                 new_G = cur_cost + trans_cost
 
                 del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
-                # print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
-                #     trans_cost,
-                #     del_h,
-                #     self.eps * del_h))
+                print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
+                    trans_cost,
+                    del_h,
+                    self.eps * del_h))
 
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (

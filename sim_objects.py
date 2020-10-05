@@ -65,8 +65,8 @@ class Bottle:
             return np.array([0, 0, water_height * 0.4])
 
     def create_sim_bottle(self, pos=None, ori=None):
-        # if self.bottle_id is not None:
-        #     p.removeBody(self.bottle_id)
+        if self.bottle_id is not None:
+            p.removeBody(self.bottle_id)
         if ori is None:
             ori = [0, 0, 0, 1]
         if pos is not None:
@@ -152,8 +152,9 @@ class Arm:
         self.num_joints = p.getNumJoints(self.kukaId)
         self.ikSolver = 0  # id of solver algorithm provided by pybullet
 
+        self.joint_pose = None
         self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
-        self.reset(joint_pose=self.init_joints)
+        self.reset(joint_pose=self.init_joints)  # sets joint_pose
 
     def update_joint_pose(self):
         joint_states = p.getJointStates(self.kukaId, range(self.num_joints))

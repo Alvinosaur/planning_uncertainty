@@ -206,8 +206,18 @@ class Environment(object):
         target_joint_pose = init_joints + dq
         joint_traj = np.linspace(init_joints,
                                  target_joint_pose, num=num_iters)
+        print(joint_traj.shape)
 
         return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+
+    def command_new_pose(self, joint_pose):
+        for ji, jval in enumerate(joint_pose):
+            p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
+                                    jointIndex=ji,
+                                    controlMode=p.POSITION_CONTROL,
+                                    targetPosition=jval,
+                                    force=self.arm.force,
+                                    positionGain=self.arm.position_gain)
 
     def simulate_plan(self, joint_traj, bottle_pos, bottle_ori):
         """Run simulation with given joint-space trajectory. Does not reset arm
@@ -240,14 +250,9 @@ class Environment(object):
         traj_len = joint_traj.shape[0]
         while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
-            next_joint_pose = joint_traj[iter, :]
-            for ji, jval in enumerate(next_joint_pose):
-                p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
-                                        jointIndex=ji,
-                                        controlMode=p.POSITION_CONTROL,
-                                        targetPosition=jval,
-                                        force=self.arm.force,
-                                        positionGain=self.arm.position_gain)
+            next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
+            self.command_new_pose(next_joint_pose)
+
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
@@ -323,6 +328,11 @@ class Environment(object):
         # last eigenvector corresponds to largest eigenvalue
         avg_quat = VT[0, :]
         return avg_quat  # / np.linalg.norm(avg_quat)
+
+    @ staticmethod
+    def state_to_str(state):
+        s = ", ".join(["%.2f" % val for val in state])
+        return s
 
 
 def test_environment_avg_quat():
