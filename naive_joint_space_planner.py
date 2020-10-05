@@ -168,7 +168,8 @@ class NaivePlanner():
                     lineColorRGB=[1, 0, 0], lineWidth=1,
                     replaceItemUniqueId=self.env.target_line_id,
                     lifeTime=10)
-            print(n)
+            # print(n)
+            print("Adding to closed: ", state_key)
             if state_key in closed_set:
                 continue
             closed_set.add(state_key)
@@ -199,29 +200,32 @@ class NaivePlanner():
 
                 # completely ignore actions that knock over bottle
                 if is_fallen:
+                    print('fallen!')
                     continue
 
                 # build next state and check if already expanded
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
                 if next_state_key in closed_set:  # if already expanded, skip
+                    print("in closed set?: ", next_state_key)
                     continue
 
                 arm_bottle_dist, nn_joint_i, nn_joint_pos = (
                     self.dist_arm_to_bottle(next_state, new_arm_positions))
                 h = self.heuristic(next_state, arm_bottle_dist)
                 new_G = cur_cost + trans_cost
+
+                del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
+                # print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
+                #     trans_cost,
+                #     del_h,
+                #     self.eps * del_h))
+
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
                     overall_cost = new_G + self.eps * h
-
-                    del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
-                    print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
-                        trans_cost,
-                        del_h,
-                        self.eps * del_h))
 
                     # add to open set
                     heapq.heappush(open_set, Node(
@@ -308,7 +312,7 @@ class NaivePlanner():
         pos = np.array(self.bottle_pos_from_state(state))
         pos_i = np.rint(pos / self.dpos)
         joints = self.joint_pose_from_state(state)
-        joints_i = np.rint((joints - self.env.arm.ul) / self.da)
+        joints_i = np.rint(joints / self.da)
         # tuple of ints as unique id
         return (tuple(pos_i), tuple(joints_i))
 

@@ -50,7 +50,6 @@ def bottle_EE_to_state(bpos, arm: Arm, EE_pos=None):
 
 
 def generate_random_start_goals(arm: Arm, bottle: Bottle, num_pairs=50):
-    valid_bottle_positions = []
     max_horiz_dist = 0.9 * arm.MAX_HORIZ_REACH
     min_horiz_dist = 0.2 * arm.MAX_HORIZ_REACH
 

@@ -53,16 +53,10 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         exit()
 
 
-# def interleaved_replanning_execution():
-#     planner = NaivePlanner(start, goal, env, xbounds,
-#                            ybounds, dist_thresh, eps)
-#     state_path, policy = planner.plan()
-
-
 def main():
     VISUALIZE = True
     REPLAY_RESULTS = False
-    LOGGING = True
+    LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
         p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -130,6 +124,7 @@ def main():
             start_goals = pickle.load(f)
             # print(start_goals)
 
+    filtered_start_goals = []
     for i, (startb, goalb, start_EE) in enumerate(start_goals):
         if not i >= 0:
             continue
@@ -139,16 +134,24 @@ def main():
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
+        direct_plan_execution(planner, env,
+                              replay_saved=REPLAY_RESULTS,
+                              visualize=VISUALIZE,
+                              res_fname="results_%d" % i)
 
         try:
-            with helpers.time_limit(2):
+            with helpers.time_limit(30):
                 direct_plan_execution(planner, env,
                                       replay_saved=REPLAY_RESULTS,
                                       visualize=VISUALIZE,
                                       res_fname="results_%d" % i)
                 print("FOUND PLAN FOR %d" % i)
+                filtered_start_goals.append((startb, goalb, start_EE))
         except helpers.TimeoutException:
-            print('continue')
+            print('Timed out!')
+
+    with open("filtered_start_goals.obj", "wb") as f:
+        pickle.dump(filtered_start_goals, f)
 
 
 if __name__ == "__main__":
