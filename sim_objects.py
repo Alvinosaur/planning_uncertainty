@@ -16,8 +16,16 @@ class Bottle:
     PLANE_OFFSET = 0.056
     INIT_PLANE_OFFSET = 0.03805010362200368  # found experimentally
     # PLANE_OFFSET = 0
+    DEFAULT_RAD = 0.03175    # m
+    DEFAULT_HEIGHT = 0.1905  # m
+    DEFAULT_FRIC = 0.1  # plastic-wood dynamic friction
+    DEFAULT_FILL = 0.5
 
-    def __init__(self, start_pos, start_ori, fill_prop=0.5):
+    def __init__(self, start_pos, start_ori,
+                 fill_prop=DEFAULT_FILL,
+                 fric=DEFAULT_FRIC,
+                 radius=DEFAULT_RAD,
+                 height=DEFAULT_HEIGHT):
         self.start_pos = start_pos
         self.start_ori = start_ori
         self.pos = self.start_pos
@@ -26,11 +34,10 @@ class Bottle:
         self.bottle_id = None
 
         self.max_volume = 16.9      # fl-oz
-        self.radius = 0.03175    # m
-        self.height = 0.1905     # m
-        self.mass = 0.5        # kg
-        self.default_fric = 0.1  # plastic-wood dynamic friction
-        self.lat_fric = self.default_fric
+        self.radius = radius    # m
+        self.height = height     # m
+        self.mass = 0.5  # kg
+        self.lat_fric = fric
         self.min_fill = 0.3
         self.max_fill = 1.0
 
@@ -47,8 +54,9 @@ class Bottle:
             height=self.height)
 
     def set_fill_proportion(self, fill_prop):
-        self.bottle_mass = self.mass_from_fill(fill_prop)
-        self.center_of_mass = self.com_from_fill(fill_prop)
+        self.fill_prop = np.clip(fill_prop, self.min_fill, self.max_fill)
+        self.bottle_mass = self.mass_from_fill(self.fill_prop)
+        self.center_of_mass = self.com_from_fill(self.fill_prop)
         self.inertial_shift = self.center_of_mass - self.default_com
 
     def mass_from_fill(self, fill_prop):
@@ -57,7 +65,6 @@ class Bottle:
 
     def com_from_fill(self, fill_prop):
         # calculate center of mass of water bottle
-        fill_prop = np.clip(fill_prop, self.min_fill, self.max_fill)
         water_height = self.height * fill_prop
         if fill_prop <= self.min_fill:
             # if bottle empty, com is just center of cylinder

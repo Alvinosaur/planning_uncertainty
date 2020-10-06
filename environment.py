@@ -6,6 +6,7 @@ from datetime import datetime
 import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
+import scipy.stats
 
 from sim_objects import Arm, Bottle
 
@@ -51,6 +52,19 @@ class ActionSpace():
         return (self.actions_mat[dq_i, :], num_iters)
 
 
+class EnvParams(object):
+    def __init__(self, bottle_fill, bottle_fric, bottle_fill_prob,
+                 bottle_fric_prob):
+        self.bottle_fill = bottle_fill
+        self.bottle_fric = bottle_fric
+        self.bottle_fill_prob = bottle_fill_prob
+        self.bottle_fric_prob = bottle_fric_prob
+
+    def __repr__(self):
+        return "fill, fric, pfill, pfric: %.2f, %.2f, %.2f, %.2f" % (
+            self.bottle_fill, self.bottle_fric, self.bottle_fill_prob, self.bottle_fric_prob)
+
+
 class Environment(object):
     # pybullet_data built-in models
     plane_urdf_filepath = "plane.urdf"
@@ -87,15 +101,25 @@ class Environment(object):
         self.dist_cost_scale = 100
 
         # Normal distribution of internal bottle params
-        self.min_fric = 0.1
+        # normal distrib for bottle friction
+        self.min_fric = 0.05
         self.max_fric = 0.2
-        self.min_fill = self.bottle.min_fill
-        self.max_fill = 1.0
         self.mean_friction = (self.min_fric + self.max_fric) / 2.
         # want min and max to be at 3 std deviations
         self.std_friction = (self.max_fric - self.mean_friction) / 3.
+        # NOTE: DO NOT USE KWARGS for scipy norm, use ARGS
+        # since scipy uses "loc" for mean and "scale" for stddev, avoid passing
+        # in wrong kwargs and having them ignored
+        self.fric_distrib = scipy.stats.norm(
+            self.mean_friction, self.std_friction)
+
+        # normal distrib for bottle fill proportion
+        self.min_fill = self.bottle.min_fill
+        self.max_fill = 1.0
         self.mean_fillp = (self.min_fill + self.max_fill) / 2.
         self.std_fillp = (self.max_fill - self.mean_fillp) / 3.
+        self.fillp_distrib = scipy.stats.norm(
+            self.mean_fillp, self.std_fillp)
 
     def eval_cost(self, is_fallen, bottle_pos, ee_move_dist):
         # dist = np.linalg.norm(self.target_bottle_pos[:2] - bottle_pos[:2])
@@ -107,93 +131,31 @@ class Environment(object):
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
 
-    def run_sim_avg(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
+    def run_multiple_sims(self, action, sim_params_set, init_joints=None,
+                          bottle_pos=None, bottle_ori=None):
         """
-        Randomly sample internal(unobservable to agent) bottle parameters for each iteration, and return cost and next state averaged over all iterations. In cases where bottle falls, next state is not included in average next state.
-
-        NOTE: this is still not stochastic because we overall are using some finalized cost and next state to represent successor of a (state, action) pair. In a true stochastic planner, successors are represented
-        by a belief space, or distribution of possible next states, each with
-        some probability.
+        Simply run multiple simulations with different environmental parameters.
+        Return a list of all results, each entry as a tuple. Let the planner do
+        post-processing of these results.
         """
-        avg_cost = 0
-        avg_next_bpos = np.zeros(2)
-        # next_bottle_oris = np.zeros(shape=(4, self.num_rand_samples))  # 4 x N
-        avg_joint_pos = np.zeros(self.arm.num_DOF)
-        for sim_iter in range(self.num_rand_samples):
-            # randomly sample friction and fill-prop of bottle
-            rand_fill = np.random.normal(
-                loc=self.mean_fillp, scale=self.std_fillp)
-            rand_fill = np.clip(rand_fill, self.min_fill, self.max_fill)
-            rand_fric = np.random.normal(
-                loc=self.mean_friction, scale=self.std_friction)
-            rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
+        all_results = []
+        for sim_params in sim_params_set:
+            results = self.run_sim(action=action,
+                                   sim_params=sim_params,
+                                   init_joints=init_joints,
+                                   bottle_pos=np.copy(bottle_pos),
+                                   bottle_ori=bottle_ori)
+            all_results.append(results)
 
-            # set random parameters
-            self.bottle.set_fill_proportion(rand_fill)
-            self.bottle.lat_fric = rand_fric
+            # extra optimization: if arm didn't touch bottle, no need for more
+            # iterations
+            (_, is_collision, new_bottle_pos, _, _) = results
+            if not is_collision:
+                break
 
-            # run sim deterministically and average cost and new bottle pos
-            cost, bpos, bori, arm_pos = self.run_sim(
-                action, init_joints, bottle_pos, bottle_ori)
-            avg_cost += cost
-            avg_next_bpos += bpos
-            # next_bottle_oris[:, sim_iter] = bori
-            avg_joint_pos += arm_pos
+        return all_results
 
-            # avg_bori = self.avg_quaternion(next_bottle_oris)
-        return (avg_cost / float(self.num_rand_samples),
-                avg_next_bpos / float(self.num_rand_samples),
-                bori,  # just return last bottle orientation for now
-                avg_joint_pos / float(self.num_rand_samples))
-
-    def run_sim_mode(self, action, cost_disc, state_disc, init_joints=None, bottle_pos=None, bottle_ori=None):
-        """
-        Similar to run_sim_avg except output cost and next state are chosen as the mode, or most common pair of outcomes. Outputs are discretized into bins.
-        """
-        # map discretized costs/states to their counts
-        cost_bins = dict()
-        max_cost_count, mode_cost = 0, None
-        next_state_bins = dict()
-        max_next_state_count, mode_next_state = 0, None
-        for sim_iter in range(self.num_rand_samples):
-            # randomly sample friction and fill-prop of bottle
-            rand_fill = np.random.normal(
-                loc=self.mean_fillp, scale=self.std_fillp)
-            rand_fill = np.clip(rand_fill, self.min_fill, self.max_fill)
-            rand_fric = np.random.normal(
-                loc=self.mean_friction, scale=self.std_friction)
-            rand_fric = np.clip(rand_fric, self.min_fric, self.max_fric)
-
-            # set random parameters
-            self.bottle.set_fill_proportion(rand_fill)
-            self.bottle.lat_fric = rand_fric
-
-            # run sim deterministically and average cost and new bottle pos
-            cost, ns = self.run_sim(
-                action, init_joints, bottle_pos, bottle_ori)
-
-            # store results
-            cost_i = cost / cost_disc
-            ns_i = (ns / state_disc).astype(int)
-            if cost_i in cost_bins:
-                cost_bins[cost_i] += 1
-            else:
-                cost_bins[cost_i] = 1
-            if cost_bins[cost_i] > max_cost_count:
-                max_cost_count = cost_bins[cost_i]
-                mode_cost = cost_i
-
-            if ns_i in next_state_bins:
-                next_state_bins[ns_i] += 1
-            else:
-                next_state_bins[ns_i] = 1
-            if next_state_bins[ns_i] > max_next_state_count:
-                max_next_state_count = next_state_bins[ns_i]
-                mode_next_state = ns_i
-
-        return mode_cost * cost_disc, ns_i * state_disc
-
-    def run_sim(self, action, init_joints=None, bottle_pos=None, bottle_ori=None):
+    def run_sim(self, action, sim_params: EnvParams, init_joints=None, bottle_pos=None, bottle_ori=None):
         """Deterministic simulation where all parameters are already set and
         known.
 
@@ -208,7 +170,7 @@ class Environment(object):
         joint_traj = np.linspace(init_joints,
                                  target_joint_pose, num=num_iters)
 
-        return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+        return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori, sim_params=sim_params)
 
     def command_new_pose(self, joint_pose):
         for ji, jval in enumerate(joint_pose):
@@ -219,7 +181,7 @@ class Environment(object):
                                     force=self.arm.force,
                                     positionGain=self.arm.position_gain)
 
-    def simulate_plan(self, joint_traj, bottle_pos, bottle_ori):
+    def simulate_plan(self, joint_traj, bottle_pos, bottle_ori, sim_params: EnvParams):
         """Run simulation with given joint-space trajectory. Does not reset arm
         joint angles after simulation is done, so that value can be guaranteed to be untouched.
 
@@ -297,6 +259,43 @@ class Environment(object):
         p.removeBody(self.bottle.bottle_id)
 
         return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
+
+    def gen_random_env_param_set(self, num=1):
+        rand_fills, rand_fill_probs = self.get_random_sample_prob(
+            distrib=self.fillp_distrib, minv=self.min_fill, maxv=self.max_fill, num=num)
+        rand_frics, rand_fric_probs = self.get_random_sample_prob(
+            distrib=self.fric_distrib, minv=self.min_fric, maxv=self.max_fric, num=num)
+
+        param_set = []
+        for i in range(num):
+            param = EnvParams(bottle_fill=rand_fills[i],
+                              bottle_fric=rand_frics[i],
+                              bottle_fill_prob=rand_fill_probs[i],
+                              bottle_fric_prob=rand_fric_probs[i])
+            param_set.append(param)
+        return param_set
+
+    @staticmethod
+    def get_random_sample_prob(distrib, minv, maxv, num=1):
+        """get N random samples and their "probability"
+        Args:
+            distrib (scipy.stats.distributions.rv_frozen object): [description]
+            min ([type]): [description]
+            max ([type]): [description]
+            num (int, optional): [description]. Defaults to 1.
+        Returns:
+            [type]: [description]
+        """
+        rand_vars = distrib.rvs(size=num)
+        rand_vars = np.clip(rand_vars, minv, maxv)
+        probs = []
+        for v in rand_vars:
+            if v < distrib.mean():
+                p = distrib.cdf(v)
+            else:
+                p = 1 - distrib.cdf(v)
+            probs.append(p)
+        return rand_vars, probs
 
     @staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime,

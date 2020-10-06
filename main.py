@@ -43,6 +43,14 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         env.arm.reset(init_joints)
         bottle_ori = np.array([0, 0, 0, 1])
 
+        bottle_goal = planner.bottle_pos_from_state(planner.goal)
+        env.goal_line_id = env.draw_line(
+            lineFrom=bottle_goal,
+            lineTo=bottle_goal + np.array([0, 0, 1]),
+            lineColorRGB=[0, 0, 1], lineWidth=1,
+            replaceItemUniqueId=env.goal_line_id,
+            lifeTime=0)
+
         full_arm_traj = policy_to_full_traj(init_joints, policy)
         is_fallen, is_collision, bottle_pos, bottle_ori, joint_pos = (
             env.simulate_plan(joint_traj=full_arm_traj, bottle_pos=bottle_pos,
@@ -54,8 +62,8 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
 
 
 def main():
-    VISUALIZE = False
-    REPLAY_RESULTS = False
+    VISUALIZE = True
+    REPLAY_RESULTS = True
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
@@ -69,7 +77,7 @@ def main():
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
-            p.STATE_LOGGING_VIDEO_MP4, "initial_start_goal_configurations.mp4")
+            p.STATE_LOGGING_VIDEO_MP4, "single_plan.mp4")
 
     # bottle
     # bottle_start_pos = np.array(
@@ -116,33 +124,49 @@ def main():
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
 
+    # for i, (startb, goalb, start_joints) in enumerate(start_goals):
+    #     print(startb, goal)
+    #     if np.linalg.norm(np.array(startb) - np.array(goalb)) <= dist_thresh:
+    #         print("%d TOO EASY" % i)
+
+    # exit()
+
+    # change bottle with randomly sampled radius, height, fill, friction
+    # radius = 0.025
+    # height = 0.21
+    # fill_prop = 0.3
+    # fric = env.max_fric
+    # new_bottle = Bottle(start_pos=bottle_start_pos,
+    #                     start_ori=bottle_start_ori,
+    #                     fill_prop=fill_prop,
+    #                     fric=fric)
+    # env.bottle = new_bottle
+
     for i, (startb, goalb, start_joints) in enumerate(start_goals):
-        if not i >= 11:
+        if not i >= 2:
             continue
+        print(i)
 
         start_state = helpers.bottle_EE_to_state(
             bpos=startb, arm=arm, joints=start_joints)
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
-        # direct_plan_execution(planner, env,
-        #                       replay_saved=REPLAY_RESULTS,
-        #                       visualize=VISUALIZE,
-        #                       res_fname="results_%d" % i)
-        try:
-            with helpers.time_limit(30):
-                direct_plan_execution(planner, env,
-                                      replay_saved=REPLAY_RESULTS,
-                                      visualize=VISUALIZE,
-                                      res_fname="results_%d" % i)
-                print("FOUND PLAN FOR %d" % i)
-        except helpers.TimeoutException:
-            # just keep the last state as the new goal
-            start_goals[i] = (startb, env.bottle.pos, start_joints)
-            print('Timed out!')
-
-    with open("filtered_start_goals.obj", "wb") as f:
-        pickle.dump(start_goals, f)
+        direct_plan_execution(planner, env,
+                              replay_saved=REPLAY_RESULTS,
+                              visualize=VISUALIZE,
+                              res_fname="results_%d" % i)
+        # try:
+        #     with helpers.time_limit(30):
+        #         direct_plan_execution(planner, env,
+        #                               replay_saved=REPLAY_RESULTS,
+        #                               visualize=VISUALIZE,
+        #                               res_fname="results_%d" % i)
+        #         print("FOUND PLAN FOR %d" % i)
+        # except helpers.TimeoutException:
+        #     # just keep the last state as the new goal
+        #     start_goals[i] = (startb, env.bottle.pos, start_joints)
+        #     print('Timed out!')
 
 
 if __name__ == "__main__":
