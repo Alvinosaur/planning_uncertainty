@@ -197,6 +197,8 @@ class Environment(object):
         prev_arm_pos = np.copy(init_arm_pos)
 
         # create new bottle object with parameters set beforehand
+        self.bottle.set_fill_proportion(sim_params.bottle_fill)
+        self.bottle.lat_fric = sim_params.bottle_fric
         if bottle_pos is not None:
             self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
             prev_bottle_pos = bottle_pos

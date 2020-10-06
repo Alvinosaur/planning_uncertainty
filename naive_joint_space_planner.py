@@ -78,8 +78,12 @@ class Node(object):
 
 
 class NaivePlanner():
+    SINGLE = 0
+    AVG = 1
+    MODE = 2
 
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, visualize=False):
+    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, visualize=False,
+                 sim_mode=SINGLE, num_rand_samples=1):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -108,6 +112,34 @@ class NaivePlanner():
 
         self.visualize = visualize
 
+        # random samples of environmental parameters
+        self.num_rand_samples = num_rand_samples
+        self.sim_params_set = env.gen_random_env_param_set(
+            num=self.num_rand_samples)
+
+        # overall probability of a given simulation is product of probabilities
+        # of random env params
+        self.param_probs = [(p.bottle_fill_prob * p.bottle_fric_prob)
+                            for p in self.sim_params_set]
+
+        # safety threshold for prob(bottle fall) to deem invalid transitions
+        self.fall_proportion_thresh = 1
+
+        # method of simulating an action
+        self.sim_mode = sim_mode
+        if sim_mode == self.SINGLE:
+            self.sim_func = self.env.run_sim
+            assert(self.num_rand_samples == 1)
+        elif sim_mode == self.AVG:
+            self.sim_func = self.env.run_multiple_sims
+            self.process_multiple_sim_results = self.avg_results
+            # 1 is ok, can change, but to double-check that we're not using default value
+            assert(self.num_rand_samples > 1)
+        else:
+            print("Invalid sim mode specified: {}, defaulting to SINGLE".format(sim_mode))
+            self.sim_func = self.env.run_sim
+            assert(self.num_rand_samples == 1)
+
     def debug_view_state(self, state):
         joint_pose = self.joint_pose_from_state(state)
         bx, by, _ = self.bottle_pos_from_state(state)
@@ -116,6 +148,45 @@ class NaivePlanner():
         eex, eey = link_states[-1][4][:2]
         dist = ((bx - eex) ** 2 + (by - eey) ** 2) ** 0.5
         print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
+
+    def change_param_set(self, new_param_set):
+        self.sim_params_set = copy.deepcopy(new_param_set)
+        self.param_probs = [(p.bottle_fill_prob * p.bottle_fric_prob)
+                            for p in self.sim_params_set]
+
+    def avg_results(self, results):
+        """
+        Randomly sample internal(unobservable to agent) bottle parameters for
+        each iteration to calculate expected fall rate. 
+        Only the first sim param (which should be same as the single planner)
+         will be used to determine cost and next state.
+        NOTE: this is still not stochastic because we overall are using some finalized cost and next state to represent successor of a (state, action) pair. In a true stochastic planner, successors are represented
+        by a belief space, or distribution of possible next states, each with
+        some probability.
+        """
+
+        # calculate proportion and see if exceeds probability threshold
+        avg_fall_prob = 0
+        fall_prob_norm = 0
+
+        # only the first run is used to determine next state and reward
+        _, _, bpos, bori, next_joint_pos = results[0]
+
+        # NOTE: simulation automatically terminates if the arm doesn't touch
+        # bottle since no need to simulate different bottle parameters
+        # so num_iters <= self.num_rand_samples
+        num_iters = len(results)
+        for i in range(num_iters):
+            is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
+
+            # weighted sum of fall counts: sum(pi*xi) / sum(pi)
+            avg_fall_prob += is_fallen * self.param_probs[i]
+            fall_prob_norm += self.param_probs[i]
+
+        # normalize by sum of weights (not all but only up to num_iters)
+        fall_proportion = avg_fall_prob / fall_prob_norm
+
+        return (fall_proportion, bpos, bori, next_joint_pos)
 
     def plan(self):
         # initialize open set with start and G values
@@ -188,18 +259,36 @@ class NaivePlanner():
                 action = self.A.get_action(ai)
 
                 # (state, action) -> (cost, next_state)
-                (is_fallen, is_collision, next_bottle_pos,
-                 next_bottle_ori, next_joint_pose) = self.env.run_sim(
-                    action=action, init_joints=cur_joints,
-                    bottle_pos=bottle_pos, bottle_ori=bottle_ori)
+                if self.sim_mode == self.SINGLE:
+                    # only use one simulation parameter set
+                    (is_fallen, _, next_bottle_pos,
+                     next_bottle_ori, next_joint_pose) = self.sim_func(
+                        action=action, init_joints=cur_joints,
+                        bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                        sim_params=self.sim_params_set[0])
+                    invalid = is_fallen
+                    fall_prob = 1 if is_fallen else 0
+
+                else:
+                    results = self.sim_func(
+                        action=action, init_joints=cur_joints,
+                        bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                        sim_params_set=self.sim_params_set)
+
+                    (fall_prob, next_bottle_pos,
+                     next_bottle_ori, next_joint_pose) = (
+                         self.process_multiple_sim_results(results))
+                    invalid = fall_prob >= self.fall_proportion_thresh
+
+                # completely ignore actions that knock over bottle with high
+                # probability
+                if invalid:
+                    continue
 
                 new_arm_positions = self.env.arm.get_joint_link_positions(
                     next_joint_pose)
-                trans_cost = self.calc_trans_cost(n, new_arm_positions)
-
-                # completely ignore actions that knock over bottle
-                if is_fallen:
-                    continue
+                trans_cost = (self.calc_trans_cost(n, new_arm_positions) +
+                              1 * fall_prob)
 
                 # build next state and check if already expanded
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])

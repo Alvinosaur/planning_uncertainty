@@ -5,7 +5,7 @@ import numpy as np
 import pickle
 
 from sim_objects import Bottle, Arm
-from environment import Environment, ActionSpace
+from environment import Environment, ActionSpace, EnvParams
 from naive_joint_space_planner import NaivePlanner
 import experiment_helpers as helpers
 
@@ -24,15 +24,16 @@ def policy_to_full_traj(init_joints, policy):
 
 
 def direct_plan_execution(planner: NaivePlanner, env: Environment,
+                          exec_params_set,
                           replay_saved=False, visualize=False,
                           res_fname="results"):
     if not replay_saved:
         state_path, policy = planner.plan()
-        np.savez("results/%s" % res_fname,
+        np.savez("%s" % res_fname,
                  state_path=state_path, policy=policy)
 
     else:
-        results = np.load("results/%s.npz" % res_fname, allow_pickle=True)
+        results = np.load("%s.npz" % res_fname, allow_pickle=True)
         policy = results["policy"]
         state_path = results["state_path"]
 
@@ -54,7 +55,8 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         full_arm_traj = policy_to_full_traj(init_joints, policy)
         is_fallen, is_collision, bottle_pos, bottle_ori, joint_pos = (
             env.simulate_plan(joint_traj=full_arm_traj, bottle_pos=bottle_pos,
-                              bottle_ori=bottle_ori))
+                              bottle_ori=bottle_ori,
+                              sim_params=exec_params_set))
 
     elif not visualize and replay_saved:
         print("Trying to playback plan without visualizing!")
@@ -64,7 +66,7 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
 def main():
     VISUALIZE = True
     REPLAY_RESULTS = True
-    LOGGING = False
+    LOGGING = True
     GRAVITY = -9.81
     if VISUALIZE:
         p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -116,11 +118,6 @@ def main():
     eps = 5
     da_rad = 8 * math.pi / 180.0
 
-    # run planner and visualize result
-    planner = NaivePlanner(start, goal, env, xbounds,
-                           ybounds, dist_thresh, eps, da_rad=da_rad,
-                           dx=dx, dy=dy, dz=dz, visualize=VISUALIZE)
-
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
 
@@ -142,31 +139,49 @@ def main():
     #                     fric=fric)
     # env.bottle = new_bottle
 
-    for i, (startb, goalb, start_joints) in enumerate(start_goals):
-        if not i >= 2:
-            continue
-        print(i)
+    # run planner and visualize result
+    num_sims_per_action = 10
+    plan_params_sets = env.gen_random_env_param_set(
+        num=num_sims_per_action)
 
-        start_state = helpers.bottle_EE_to_state(
-            bpos=startb, arm=arm, joints=start_joints)
-        goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
-        planner.start = start_state
-        planner.goal = goal_state
-        direct_plan_execution(planner, env,
-                              replay_saved=REPLAY_RESULTS,
-                              visualize=VISUALIZE,
-                              res_fname="results_%d" % i)
-        # try:
-        #     with helpers.time_limit(30):
-        #         direct_plan_execution(planner, env,
-        #                               replay_saved=REPLAY_RESULTS,
-        #                               visualize=VISUALIZE,
-        #                               res_fname="results_%d" % i)
-        #         print("FOUND PLAN FOR %d" % i)
-        # except helpers.TimeoutException:
-        #     # just keep the last state as the new goal
-        #     start_goals[i] = (startb, env.bottle.pos, start_joints)
-        #     print('Timed out!')
+    load_saved_params = True
+    if load_saved_params:
+        with open("sim_params_set.obj", "rb") as f:
+            exec_plan_params = pickle.load(f)
+            exec_params_set = exec_plan_params["exec_params_set"]
+            plan_params_sets = exec_plan_params["plan_params_sets"]
+    else:
+        with open("sim_params_set.obj", "wb") as f:
+            exec_plan_params = dict(exec_params_set=exec_params_set,
+                                    plan_params_sets=plan_params_sets)
+            pickle.dump(exec_plan_params, f)
+
+    single_planner = NaivePlanner(start, goal, env, xbounds,
+                                  ybounds, dist_thresh, eps, da_rad=da_rad,
+                                  dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.SINGLE)
+    avg_planner = NaivePlanner(start, goal, env, xbounds,
+                               ybounds, dist_thresh, eps, da_rad=da_rad,
+                               dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG,
+                               num_rand_samples=num_sims_per_action)
+
+    # exec_params_set = EnvParams(bottle_fill=1, bottle_fric=env.max_fric,
+    #                             bottle_fill_prob=0, bottle_fric_prob=0)
+    exec_params_set = plan_params_sets[0]
+    single_planner.sim_params_set = plan_params_sets
+    avg_planner.sim_params_set = plan_params_sets
+
+    (startb, goalb, start_joints) = start_goals[2]
+    start_state = helpers.bottle_EE_to_state(
+        bpos=startb, arm=arm, joints=start_joints)
+    goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
+    planner_folder = "results"
+    single_planner.start = start_state
+    single_planner.goal = goal_state
+    direct_plan_execution(single_planner, env,
+                          exec_params_set=exec_params_set,
+                          replay_saved=REPLAY_RESULTS,
+                          visualize=VISUALIZE,
+                          res_fname="%s/results_%d" % (planner_folder, 2))
 
 
 if __name__ == "__main__":
