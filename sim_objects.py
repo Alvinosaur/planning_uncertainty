@@ -20,6 +20,8 @@ class Bottle:
     def __init__(self, start_pos, start_ori, fill_prop=0.5):
         self.start_pos = start_pos
         self.start_ori = start_ori
+        self.pos = self.start_pos
+        self.ori = self.start_ori
         self.col_id = None
         self.bottle_id = None
 
@@ -65,8 +67,8 @@ class Bottle:
             return np.array([0, 0, water_height * 0.4])
 
     def create_sim_bottle(self, pos=None, ori=None):
-        if self.bottle_id is not None:
-            p.removeBody(self.bottle_id)
+        # if self.bottle_id is not None:
+        #     p.removeBody(self.bottle_id)
         if ori is None:
             ori = [0, 0, 0, 1]
         if pos is not None:
@@ -87,6 +89,7 @@ class Bottle:
                 baseCollisionShapeIndex=self.col_id,
                 basePosition=self.start_pos,
                 baseOrientation=ori)
+        self.pos = pos
         p.changeDynamics(
             bodyUniqueId=self.bottle_id,
             linkIndex=-1,  # no links, -1 refers to bottle base

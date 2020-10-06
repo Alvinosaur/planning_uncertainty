@@ -54,7 +54,7 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
 
 
 def main():
-    VISUALIZE = True
+    VISUALIZE = False
     REPLAY_RESULTS = False
     LOGGING = False
     GRAVITY = -9.81
@@ -125,6 +125,7 @@ def main():
             # print(start_goals)
 
     filtered_start_goals = []
+    count = 0
     for i, (startb, goalb, start_joints) in enumerate(start_goals):
         if not i >= 0:
             continue
@@ -134,16 +135,23 @@ def main():
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
-
+        # direct_plan_execution(planner, env,
+        #                       replay_saved=REPLAY_RESULTS,
+        #                       visualize=VISUALIZE,
+        #                       res_fname="results_%d" % count)
         try:
-            with helpers.time_limit(2):
+            with helpers.time_limit(30):
                 direct_plan_execution(planner, env,
                                       replay_saved=REPLAY_RESULTS,
                                       visualize=VISUALIZE,
-                                      res_fname="results_%d" % i)
-                print("FOUND PLAN FOR %d" % i)
+                                      res_fname="results_%d" % count)
+                print("FOUND PLAN FOR %d" % count)
                 filtered_start_goals.append((startb, goalb, start_joints))
+                count += 1
         except helpers.TimeoutException:
+            # just keep the last state as the new goal
+            filtered_start_goals.append(
+                (startb, env.bottle.pos, env.arm.joint_pose))
             print('Timed out!')
 
     with open("filtered_start_goals.obj", "wb") as f:

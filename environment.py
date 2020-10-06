@@ -19,12 +19,13 @@ class ActionSpace():
     def __init__(self, num_DOF, da_rad=default_da_rad, include_no_change=False,
                  ignore_last_joint=True):
         self.num_DOF = num_DOF
-        self.da_rad = da_rad
+        # to ensure each action's new state is treated as new state due to discretization
+        self.da_rad = da_rad * 1.2
         # self.traj_iter_set = [100, 150, 200]
         self.traj_iter_set = [200]
 
-        pos_moves = np.eye(N=num_DOF) * da_rad
-        neg_moves = np.eye(N=num_DOF) * -da_rad
+        pos_moves = np.eye(N=num_DOF) * self.da_rad
+        neg_moves = np.eye(N=num_DOF) * -self.da_rad
         no_change = np.zeros((1, num_DOF))
 
         if ignore_last_joint:
@@ -206,7 +207,6 @@ class Environment(object):
         target_joint_pose = init_joints + dq
         joint_traj = np.linspace(init_joints,
                                  target_joint_pose, num=num_iters)
-        print(joint_traj.shape)
 
         return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori)
 
@@ -274,29 +274,29 @@ class Environment(object):
                 # time.sleep(self.SIM_VIZ_FREQ)
 
             # check status of other objects to possibly terminate sim early
-            bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
+            self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
                 self.bottle.bottle_id)
             bottle_vert_stopped = math.isclose(
-                bottle_pos[2] - prev_bottle_pos[2],
+                self.bottle.pos[2] - prev_bottle_pos[2],
                 0.0, abs_tol=1e-05)
             bottle_horiz_stopped = math.isclose(
                 np.linalg.norm(
-                    np.array(bottle_pos)[:2] - np.array(prev_bottle_pos)[:2]),
+                    np.array(self.bottle.pos)[:2] - np.array(prev_bottle_pos)[:2]),
                 0.0, abs_tol=1e-05)
             bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped
-            prev_bottle_pos = bottle_pos
+            prev_bottle_pos = self.bottle.pos
 
             iter += 1
 
         # generate cost and final position
         is_fallen = self.bottle.check_is_fallen()
-        bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
+        self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
             self.bottle.bottle_id)
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return is_fallen, is_collision, bottle_pos, bottle_ori, self.arm.joint_pose
+        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
 
     @staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime,
@@ -331,7 +331,7 @@ class Environment(object):
 
     @ staticmethod
     def state_to_str(state):
-        s = ", ".join(["%.2f" % val for val in state])
+        s = ", ".join(["%.3f" % val for val in state])
         return s
 
 

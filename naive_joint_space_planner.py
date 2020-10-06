@@ -212,11 +212,11 @@ class NaivePlanner():
                 h = self.heuristic(next_state, arm_bottle_dist)
                 new_G = cur_cost + trans_cost
 
-                del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
-                print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
-                    trans_cost,
-                    del_h,
-                    self.eps * del_h))
+                # del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
+                # print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
+                #     trans_cost,
+                #     del_h,
+                #     self.eps * del_h))
 
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
@@ -236,7 +236,8 @@ class NaivePlanner():
                     # build directed graph
                     transitions[next_state_key] = (state_key, ai)
 
-        print("States Expanded: %d" % num_expansions)
+        print("States Expanded: %d, found goal: %d" %
+              (num_expansions, goal_expanded))
         if not goal_expanded:
             return [], []
         # reconstruct path
