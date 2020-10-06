@@ -113,21 +113,11 @@ def main():
                            ybounds, dist_thresh, eps, da_rad=da_rad,
                            dx=dx, dy=dy, dz=dz, visualize=VISUALIZE)
 
-    save_new_start_goals = False
-    if save_new_start_goals:
-        start_goals = helpers.generate_random_start_goals(
-            env=env, bottle=bottle, num_pairs=50)
-        with open("start_goals.obj", "wb") as f:
-            pickle.dump(start_goals, f)
-    else:
-        with open("start_goals.obj", "rb") as f:
-            start_goals = pickle.load(f)
-            # print(start_goals)
+    with open("filtered_start_goals.obj", "rb") as f:
+        start_goals = pickle.load(f)
 
-    filtered_start_goals = []
-    count = 0
     for i, (startb, goalb, start_joints) in enumerate(start_goals):
-        if not i >= 0:
+        if not i >= 11:
             continue
 
         start_state = helpers.bottle_EE_to_state(
@@ -138,24 +128,21 @@ def main():
         # direct_plan_execution(planner, env,
         #                       replay_saved=REPLAY_RESULTS,
         #                       visualize=VISUALIZE,
-        #                       res_fname="results_%d" % count)
+        #                       res_fname="results_%d" % i)
         try:
             with helpers.time_limit(30):
                 direct_plan_execution(planner, env,
                                       replay_saved=REPLAY_RESULTS,
                                       visualize=VISUALIZE,
-                                      res_fname="results_%d" % count)
-                print("FOUND PLAN FOR %d" % count)
-                filtered_start_goals.append((startb, goalb, start_joints))
-                count += 1
+                                      res_fname="results_%d" % i)
+                print("FOUND PLAN FOR %d" % i)
         except helpers.TimeoutException:
             # just keep the last state as the new goal
-            filtered_start_goals.append(
-                (startb, env.bottle.pos, env.arm.joint_pose))
+            start_goals[i] = (startb, env.bottle.pos, start_joints)
             print('Timed out!')
 
     with open("filtered_start_goals.obj", "wb") as f:
-        pickle.dump(filtered_start_goals, f)
+        pickle.dump(start_goals, f)
 
 
 if __name__ == "__main__":
