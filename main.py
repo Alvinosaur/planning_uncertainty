@@ -66,7 +66,7 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
 def main():
     VISUALIZE = True
     REPLAY_RESULTS = True
-    LOGGING = True
+    LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
         p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -164,9 +164,9 @@ def main():
                                dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG,
                                num_rand_samples=num_sims_per_action)
 
-    # exec_params_set = EnvParams(bottle_fill=1, bottle_fric=env.max_fric,
-    #                             bottle_fill_prob=0, bottle_fric_prob=0)
-    exec_params_set = plan_params_sets[0]
+    exec_params_set = EnvParams(bottle_fill=1, bottle_fric=env.max_fric,
+                                bottle_fill_prob=0, bottle_fric_prob=0)
+    # exec_params_set = plan_params_sets[0]
     single_planner.sim_params_set = plan_params_sets
     avg_planner.sim_params_set = plan_params_sets
 
