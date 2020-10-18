@@ -25,9 +25,9 @@ def policy_to_full_traj(init_joints, policy):
 
 def direct_plan_execution(planner: NaivePlanner, env: Environment,
                           exec_params_set,
-                          replay_saved=False, visualize=False,
+                          load_saved=False, play_results=False,
                           res_fname="results"):
-    if not replay_saved:
+    if not load_saved:
         state_path, policy = planner.plan()
         np.savez("%s" % res_fname,
                  state_path=state_path, policy=policy)
@@ -35,9 +35,12 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
     else:
         results = np.load("%s.npz" % res_fname, allow_pickle=True)
         policy = results["policy"]
+        print("Policy:")
+        for dq_vec, num_iters in policy:
+            print(num_iters, planner.state_to_str(dq_vec))
         state_path = results["state_path"]
 
-    if visualize:
+    if play_results:
         # print(policy)
         bottle_pos = planner.bottle_pos_from_state(planner.start)
         init_joints = planner.joint_pose_from_state(planner.start)
@@ -53,19 +56,35 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             lifeTime=0)
 
         full_arm_traj = policy_to_full_traj(init_joints, policy)
-        is_fallen, is_collision, bottle_pos, bottle_ori, joint_pos = (
-            env.simulate_plan(joint_traj=full_arm_traj, bottle_pos=bottle_pos,
-                              bottle_ori=bottle_ori,
-                              sim_params=exec_params_set))
+        fall_count = 0
+        success_count = 0
+        env.simulate_plan(joint_traj=full_arm_traj,
+                          bottle_pos=bottle_pos,
+                          bottle_ori=bottle_ori,
+                          sim_params=exec_params_set[67])
+        # for i, exec_params in enumerate(exec_params_set):
+        #     print(exec_params)
+        #     is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos = (
+        #         env.simulate_plan(joint_traj=full_arm_traj,
+        #                           bottle_pos=bottle_pos,
+        #                           bottle_ori=bottle_ori,
+        #                           sim_params=exec_params))
+        #     is_success = planner.reached_goal(new_bottle_pos)
+        #     print("Exec %d: fell(%d), success(%d)" %
+        #           (i, is_fallen, is_success))
+        #     success_count += is_success
+        #     fall_count += is_fallen
 
-    elif not visualize and replay_saved:
-        print("Trying to playback plan without visualizing!")
-        exit()
+        print("Fall Rate: %.2f, success rate: %.2f" % (
+            fall_count / float(len(exec_params_set)),
+            success_count / float(len(exec_params_set))
+        ))
 
 
 def main():
-    VISUALIZE = True
-    REPLAY_RESULTS = True
+    VISUALIZE = False
+    REPLAY_RESULTS = False
+    LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
     GRAVITY = -9.81
     if VISUALIZE:
@@ -79,7 +98,7 @@ def main():
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
-            p.STATE_LOGGING_VIDEO_MP4, "single_plan.mp4")
+            p.STATE_LOGGING_VIDEO_MP4, "avg_plan_success.mp4")
 
     # bottle
     # bottle_start_pos = np.array(
@@ -140,9 +159,20 @@ def main():
     # env.bottle = new_bottle
 
     # run planner and visualize result
-    num_sims_per_action = 10
+    num_sims_per_action = 20
     plan_params_sets = env.gen_random_env_param_set(
         num=num_sims_per_action)
+    exec_params_set = []
+    frics = np.linspace(start=env.min_fric, stop=env.max_fric, num=10)
+    fills = np.linspace(start=env.min_fill, stop=env.max_fill, num=10)
+    for fric in frics:
+        for fill in fills:
+            exec_params_set.append(EnvParams(bottle_fill=fill, bottle_fric=fric,
+                                             bottle_fill_prob=0,
+                                             bottle_fric_prob=0))
+
+    for param in plan_params_sets:
+        print(param)
 
     load_saved_params = True
     if load_saved_params:
@@ -164,23 +194,29 @@ def main():
                                dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG,
                                num_rand_samples=num_sims_per_action)
 
-    exec_params_set = EnvParams(bottle_fill=1, bottle_fric=env.max_fric,
-                                bottle_fill_prob=0, bottle_fric_prob=0)
     # exec_params_set = plan_params_sets[0]
     single_planner.sim_params_set = plan_params_sets
     avg_planner.sim_params_set = plan_params_sets
+
+    # pick which planner to use
+    use_single = False
+    if use_single:
+        planner = single_planner
+        planner_folder = "results"
+    else:
+        planner = avg_planner
+        planner_folder = "avg_results"
 
     (startb, goalb, start_joints) = start_goals[2]
     start_state = helpers.bottle_EE_to_state(
         bpos=startb, arm=arm, joints=start_joints)
     goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
-    planner_folder = "results"
-    single_planner.start = start_state
-    single_planner.goal = goal_state
-    direct_plan_execution(single_planner, env,
+    planner.start = start_state
+    planner.goal = goal_state
+    direct_plan_execution(planner, env,
                           exec_params_set=exec_params_set,
-                          replay_saved=REPLAY_RESULTS,
-                          visualize=VISUALIZE,
+                          load_saved=LOAD_SAVED,
+                          play_results=REPLAY_RESULTS,
                           res_fname="%s/results_%d" % (planner_folder, 2))
 
 

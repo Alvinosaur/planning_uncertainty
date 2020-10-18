@@ -105,8 +105,8 @@ class Environment(object):
         self.min_fric = 0.05
         self.max_fric = 0.2
         self.mean_friction = (self.min_fric + self.max_fric) / 2.
-        # want min and max to be at 3 std deviations
-        self.std_friction = (self.max_fric - self.mean_friction) / 3.
+        # want min and max to be at 2 std deviations
+        self.std_friction = (self.max_fric - self.mean_friction) / 2.
         # NOTE: DO NOT USE KWARGS for scipy norm, use ARGS
         # since scipy uses "loc" for mean and "scale" for stddev, avoid passing
         # in wrong kwargs and having them ignored

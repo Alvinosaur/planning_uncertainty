@@ -123,7 +123,7 @@ class NaivePlanner():
                             for p in self.sim_params_set]
 
         # safety threshold for prob(bottle fall) to deem invalid transitions
-        self.fall_proportion_thresh = 1
+        self.fall_proportion_thresh = 0
 
         # method of simulating an action
         self.sim_mode = sim_mode
@@ -278,7 +278,8 @@ class NaivePlanner():
                     (fall_prob, next_bottle_pos,
                      next_bottle_ori, next_joint_pose) = (
                          self.process_multiple_sim_results(results))
-                    invalid = fall_prob >= self.fall_proportion_thresh
+                    invalid = fall_prob > self.fall_proportion_thresh
+                    print(invalid, fall_prob)
 
                 # completely ignore actions that knock over bottle with high
                 # probability
