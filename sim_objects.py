@@ -189,7 +189,7 @@ class Arm:
                 joint_positions[i + 1]]), axis=0)
             midpoints.append(midpoint)
         # ignore first two links, which are static
-        positions = joint_positions + midpoints
+        positions = midpoints + joint_positions
         return positions
 
     def reset(self, joint_pose):

@@ -123,7 +123,7 @@ class NaivePlanner():
                             for p in self.sim_params_set]
 
         # safety threshold for prob(bottle fall) to deem invalid transitions
-        self.fall_proportion_thresh = 0
+        self.fall_proportion_thresh = 0.2
 
         # method of simulating an action
         self.sim_mode = sim_mode
@@ -169,13 +169,14 @@ class NaivePlanner():
         avg_fall_prob = 0
         fall_prob_norm = 0
 
-        # only the first run is used to determine next state and reward
-        _, _, bpos, bori, next_joint_pos = results[0]
+        # draw random param from set to determine next state and reward
+        num_iters = len(results)
+        rand_sample = np.random.randint(low=0, high=num_iters)
+        _, _, bpos, bori, next_joint_pos = results[rand_sample]
 
         # NOTE: simulation automatically terminates if the arm doesn't touch
         # bottle since no need to simulate different bottle parameters
         # so num_iters <= self.num_rand_samples
-        num_iters = len(results)
         for i in range(num_iters):
             is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
 
@@ -299,6 +300,12 @@ class NaivePlanner():
 
                 arm_bottle_dist, nn_joint_i, nn_joint_pos = (
                     self.dist_arm_to_bottle(next_state, new_arm_positions))
+
+                # Quick FIX: use EE for transition costs so set nn_joint to EE
+                # still true b/c midpoints + joints, so last item is still last joint (EE)
+                nn_joint_i = -1
+                nn_joint_pos = new_arm_positions[-1]
+
                 h = self.heuristic(next_state, arm_bottle_dist)
                 new_G = cur_cost + trans_cost
 

@@ -19,7 +19,10 @@ def policy_to_full_traj(init_joints, policy):
             start=cur_joints, stop=target_joints, num=num_iters)
         piecewise_trajs.append(traj)
         cur_joints = target_joints
-    full_arm_traj = np.vstack(piecewise_trajs)
+    try:
+        full_arm_traj = np.vstack(piecewise_trajs)
+    except:
+        return []
     return full_arm_traj
 
 
@@ -33,7 +36,12 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
                  state_path=state_path, policy=policy)
 
     else:
-        results = np.load("%s.npz" % res_fname, allow_pickle=True)
+        try:
+            results = np.load("%s.npz" % res_fname, allow_pickle=True)
+        except:
+            print("Results: %s not found!" % res_fname)
+            return
+
         policy = results["policy"]
         print("Policy:")
         for dq_vec, num_iters in policy:
@@ -58,22 +66,19 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         full_arm_traj = policy_to_full_traj(init_joints, policy)
         fall_count = 0
         success_count = 0
-        env.simulate_plan(joint_traj=full_arm_traj,
-                          bottle_pos=bottle_pos,
-                          bottle_ori=bottle_ori,
-                          sim_params=exec_params_set[67])
-        # for i, exec_params in enumerate(exec_params_set):
-        #     print(exec_params)
-        #     is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos = (
-        #         env.simulate_plan(joint_traj=full_arm_traj,
-        #                           bottle_pos=bottle_pos,
-        #                           bottle_ori=bottle_ori,
-        #                           sim_params=exec_params))
-        #     is_success = planner.reached_goal(new_bottle_pos)
-        #     print("Exec %d: fell(%d), success(%d)" %
-        #           (i, is_fallen, is_success))
-        #     success_count += is_success
-        #     fall_count += is_fallen
+        for i, exec_params in enumerate(exec_params_set):
+            print("New Test with params: %s" % exec_params)
+            is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos = (
+                env.simulate_plan(joint_traj=full_arm_traj,
+                                  bottle_pos=bottle_pos,
+                                  bottle_ori=bottle_ori,
+                                  sim_params=exec_params))
+            is_success = planner.reached_goal(new_bottle_pos)
+            print("Exec #%d: fell: %d, success: %d" %
+                  (i, is_fallen, is_success))
+            print()
+            success_count += is_success
+            fall_count += is_fallen
 
         print("Fall Rate: %.2f, success rate: %.2f" % (
             fall_count / float(len(exec_params_set)),
@@ -82,7 +87,7 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
 
 
 def main():
-    VISUALIZE = False
+    VISUALIZE = True
     REPLAY_RESULTS = False
     LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
@@ -94,7 +99,7 @@ def main():
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.setGravity(0, 0, GRAVITY)
     planeId = p.loadURDF(Environment.plane_urdf_filepath,
-                         basePosition=[0, 0, 0])
+                         basePosition=[0, 0, -0.01])
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
@@ -105,7 +110,7 @@ def main():
     #     [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
     # bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
     bottle_start_pos = np.array(
-        [0.5, 0.5, Bottle.INIT_PLANE_OFFSET]).astype(float)
+        [0.5, 0.5, 0]).astype(float)
     bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
@@ -162,14 +167,9 @@ def main():
     num_sims_per_action = 20
     plan_params_sets = env.gen_random_env_param_set(
         num=num_sims_per_action)
-    exec_params_set = []
-    frics = np.linspace(start=env.min_fric, stop=env.max_fric, num=10)
-    fills = np.linspace(start=env.min_fill, stop=env.max_fill, num=10)
-    for fric in frics:
-        for fill in fills:
-            exec_params_set.append(EnvParams(bottle_fill=fill, bottle_fric=fric,
-                                             bottle_fill_prob=0,
-                                             bottle_fric_prob=0))
+    num_exec_tests = 10
+    exec_params_set = env.gen_random_env_param_set(
+        num=num_exec_tests)
 
     for param in plan_params_sets:
         print(param)
@@ -207,7 +207,9 @@ def main():
         planner = avg_planner
         planner_folder = "avg_results"
 
-    (startb, goalb, start_joints) = start_goals[2]
+    start_goal_idx = 11
+    (startb, goalb, start_joints) = start_goals[start_goal_idx]
+    start_joints = [1.15, 1.48, 1.70, 1.03, 2.77, 2.09, 3.05]
     start_state = helpers.bottle_EE_to_state(
         bpos=startb, arm=arm, joints=start_joints)
     goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
@@ -217,7 +219,27 @@ def main():
                           exec_params_set=exec_params_set,
                           load_saved=LOAD_SAVED,
                           play_results=REPLAY_RESULTS,
-                          res_fname="%s/results_%d" % (planner_folder, 2))
+                          res_fname="%s/results_%d" % (planner_folder, start_goal_idx))
+
+    # for pi, planner in enumerate([avg_planner, single_planner]):
+    #     if pi == 1:
+    #         planner_folder = "results"
+    #     else:
+    #         planner_folder = "avg_results"
+
+    #     for start_goal_idx in range(12):
+    #         print("Start goal idx: %d" % start_goal_idx)
+    #         (startb, goalb, start_joints) = start_goals[start_goal_idx]
+    #         start_state = helpers.bottle_EE_to_state(
+    #             bpos=startb, arm=arm, joints=start_joints)
+    #         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
+    #         planner.start = start_state
+    #         planner.goal = goal_state
+    #         direct_plan_execution(planner, env,
+    #                               exec_params_set=exec_params_set,
+    #                               load_saved=LOAD_SAVED,
+    #                               play_results=REPLAY_RESULTS,
+    #                               res_fname="%s/results_%d" % (planner_folder, start_goal_idx))
 
 
 if __name__ == "__main__":
