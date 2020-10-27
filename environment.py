@@ -200,7 +200,7 @@ class Environment(object):
         self.bottle.set_fill_proportion(sim_params.bottle_fill)
         self.bottle.lat_fric = sim_params.bottle_fric
         if bottle_pos is not None:
-            self.bottle.create_sim_bottle(bottle_pos + [5, 0, 0], ori=bottle_ori)
+            self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
             prev_bottle_pos = bottle_pos
         else:
             self.bottle.create_sim_bottle(ori=bottle_ori)
@@ -212,12 +212,12 @@ class Environment(object):
 
         iter = 0
         traj_len = joint_traj.shape[0]
-        all_joint_poses = []
         while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
-            all_joint_poses.append(self.arm.joint_pose)
             # set target joint pose
             next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
             self.command_new_pose(next_joint_pose)
+
+            time.sleep(0.005)
 
             # run one sim iter
             p.stepSimulation()
@@ -226,6 +226,8 @@ class Environment(object):
             contacts = p.getContactPoints(
                 self.arm.kukaId, self.bottle.bottle_id)
             is_collision |= (len(contacts) > 0)
+            if is_collision:
+                print("Collision @ %s" % self.state_to_str(next_joint_pose))
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
@@ -262,7 +264,7 @@ class Environment(object):
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose, all_joint_poses
+        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
 
     def gen_random_env_param_set(self, num=1):
         rand_fills, rand_fill_probs = self.get_random_sample_prob(

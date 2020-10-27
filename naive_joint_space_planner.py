@@ -333,6 +333,7 @@ class NaivePlanner():
 
                     # build directed graph
                     transitions[next_state_key] = (state, ai)
+                    print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
 
         print("States Expanded: %d, found goal: %d" %
               (num_expansions, goal_expanded))

@@ -11,11 +11,13 @@ from naive_joint_space_planner import NaivePlanner
 import experiment_helpers as helpers
 
 
-def policy_to_full_traj(init_joints, policy):
-    cur_joints = np.copy(init_joints)
+def policy_to_full_traj(state_path, init_joints, policy):
     piecewise_trajs = []
-    for (dq_vec, num_iters) in policy:
-        target_joints = cur_joints + dq_vec
+    print(len(state_path), len(policy))
+    cur_joints = init_joints
+    for i, (dq_vec, num_iters) in enumerate(policy):
+        # target_joints = cur_joints + dq_vec
+        target_joints = state_path[i][3:]
         traj = np.linspace(
             start=cur_joints, stop=target_joints, num=num_iters)
         piecewise_trajs.append(traj)
@@ -64,7 +66,7 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             replaceItemUniqueId=env.goal_line_id,
             lifeTime=0)
 
-        full_arm_traj = policy_to_full_traj(init_joints, policy)
+        full_arm_traj = policy_to_full_traj(state_path, init_joints, policy)
         fall_count = 0
         success_count = 0
         for i, exec_params in enumerate(exec_params_set):
@@ -213,7 +215,7 @@ def main():
 
     # exec_params_set = plan_params_sets[0]
     single_planner.sim_params_set = plan_params_sets
-    avg_planner.sim_params_set = plan_params_sets
+    avg_planner.sim_params_set = plan_params_sets[:1]
 
     # pick which planner to use
     use_single = False
