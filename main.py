@@ -3,6 +3,7 @@ import pybullet_data
 import math
 import numpy as np
 import pickle
+import matplotlib.pyplot as plt
 
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace, EnvParams
@@ -68,7 +69,7 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         success_count = 0
         for i, exec_params in enumerate(exec_params_set):
             print("New Test with params: %s" % exec_params)
-            is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos = (
+            is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos, joint_traj = (
                 env.simulate_plan(joint_traj=full_arm_traj,
                                   bottle_pos=bottle_pos,
                                   bottle_ori=bottle_ori,
@@ -79,16 +80,32 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             print()
             success_count += is_success
             fall_count += is_fallen
+            break
 
         print("Fall Rate: %.2f, success rate: %.2f" % (
             fall_count / float(len(exec_params_set)),
             success_count / float(len(exec_params_set))
         ))
 
+        joint_traj = np.vstack(joint_traj)
+
+        fig, plots = plt.subplots(2, 4)
+        print(len(plots))
+        print(len(plots[0]))
+        for i in range(planner.env.arm.num_joints):
+            r = i // 4
+            c = i % 4
+            print(r, c)
+            plots[r][c].plot(full_arm_traj[:, i], label="target traj")
+            plots[r][c].plot(joint_traj[:, i], label="actual traj")
+            plots[r][c].set_title("Joint %d" % i)
+        
+        plt.show()
+
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = False
+    REPLAY_RESULTS = True
     LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
     GRAVITY = -9.81
@@ -209,7 +226,7 @@ def main():
 
     start_goal_idx = 11
     (startb, goalb, start_joints) = start_goals[start_goal_idx]
-    start_joints = [1.15, 1.48, 1.70, 1.03, 2.77, 2.09, 3.05]
+    # start_joints = [1.15, 1.48, 1.70, 1.03, 2.77, 2.09, 3.05]
     start_state = helpers.bottle_EE_to_state(
         bpos=startb, arm=arm, joints=start_joints)
     goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)

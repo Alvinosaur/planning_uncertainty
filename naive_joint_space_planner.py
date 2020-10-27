@@ -221,6 +221,7 @@ class NaivePlanner():
 
         # find solution
         goal_expanded = False
+        
         while not goal_expanded and len(open_set) > 0:
             num_expansions += 1
 
@@ -331,7 +332,7 @@ class NaivePlanner():
                         bottle_ori=next_bottle_ori))
 
                     # build directed graph
-                    transitions[next_state_key] = (state_key, ai)
+                    transitions[next_state_key] = (state, ai)
 
         print("States Expanded: %d, found goal: %d" %
               (num_expansions, goal_expanded))
@@ -340,14 +341,15 @@ class NaivePlanner():
         # reconstruct path
         policy = []
         planned_path = []
-        state_key = self.state_to_key(self.goal)
+        state = self.goal
+        state_key = self.state_to_key(state)
         start_key = self.state_to_key(self.start)
         # NOTE: planned_path does not include initial starting pose!
         while state_key != start_key:
-            planned_path.append(self.key_to_state(state_key))
-            prev, ai = transitions[state_key]
+            planned_path.append(state)
+            state, ai = transitions[state_key]
             policy.append(self.A.get_action(ai))
-            state_key = prev
+            state_key = self.state_to_key(state)
 
         # need to reverse since backwards ordering
         planned_path.reverse()
