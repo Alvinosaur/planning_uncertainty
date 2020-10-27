@@ -217,8 +217,6 @@ class Environment(object):
             next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
             self.command_new_pose(next_joint_pose)
 
-            time.sleep(0.005)
-
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
@@ -226,11 +224,10 @@ class Environment(object):
             contacts = p.getContactPoints(
                 self.arm.kukaId, self.bottle.bottle_id)
             is_collision |= (len(contacts) > 0)
-            if is_collision:
-                print("Collision @ %s" % self.state_to_str(next_joint_pose))
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
+                time.sleep(0.002)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory

@@ -46,10 +46,10 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             return
 
         policy = results["policy"]
-        print("Policy:")
-        for dq_vec, num_iters in policy:
-            print(num_iters, planner.state_to_str(dq_vec))
         state_path = results["state_path"]
+        if len(policy) == 0:
+            print("Empty Path! Skipping....")
+            return
 
     if play_results:
         # print(policy)
@@ -71,7 +71,7 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         success_count = 0
         for i, exec_params in enumerate(exec_params_set):
             print("New Test with params: %s" % exec_params)
-            is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos, joint_traj = (
+            is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos = (
                 env.simulate_plan(joint_traj=full_arm_traj,
                                   bottle_pos=bottle_pos,
                                   bottle_ori=bottle_ori,
@@ -82,27 +82,27 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             print()
             success_count += is_success
             fall_count += is_fallen
-            break
+            # break
 
         print("Fall Rate: %.2f, success rate: %.2f" % (
             fall_count / float(len(exec_params_set)),
             success_count / float(len(exec_params_set))
         ))
 
-        joint_traj = np.vstack(joint_traj)
+        # joint_traj = np.vstack(joint_traj)
 
-        fig, plots = plt.subplots(2, 4)
-        print(len(plots))
-        print(len(plots[0]))
-        for i in range(planner.env.arm.num_joints):
-            r = i // 4
-            c = i % 4
-            print(r, c)
-            plots[r][c].plot(full_arm_traj[:, i], label="target traj")
-            plots[r][c].plot(joint_traj[:, i], label="actual traj")
-            plots[r][c].set_title("Joint %d" % i)
+        # fig, plots = plt.subplots(2, 4)
+        # print(len(plots))
+        # print(len(plots[0]))
+        # for i in range(planner.env.arm.num_joints):
+        #     r = i // 4
+        #     c = i % 4
+        #     print(r, c)
+        #     plots[r][c].plot(full_arm_traj[:, i], label="target traj")
+        #     plots[r][c].plot(joint_traj[:, i], label="actual traj")
+        #     plots[r][c].set_title("Joint %d" % i)
         
-        plt.show()
+        # plt.show()
 
 
 def main():
@@ -215,7 +215,7 @@ def main():
 
     # exec_params_set = plan_params_sets[0]
     single_planner.sim_params_set = plan_params_sets
-    avg_planner.sim_params_set = plan_params_sets[:1]
+    avg_planner.sim_params_set = plan_params_sets[:10]
 
     # pick which planner to use
     use_single = False
@@ -228,7 +228,9 @@ def main():
 
     start_goal_idx = 11
     (startb, goalb, start_joints) = start_goals[start_goal_idx]
-    # start_joints = [1.15, 1.48, 1.70, 1.03, 2.77, 2.09, 3.05]
+    # start_joints = [ 1.30108883 ,1.27731937 , 2.96705972 , 0.80271445, -2.15213113 , 0.97012585,
+#   0.16352632]
+
     start_state = helpers.bottle_EE_to_state(
         bpos=startb, arm=arm, joints=start_joints)
     goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
@@ -245,6 +247,7 @@ def main():
     #         planner_folder = "results"
     #     else:
     #         planner_folder = "avg_results"
+    #         continue
 
     #     for start_goal_idx in range(12):
     #         print("Start goal idx: %d" % start_goal_idx)
