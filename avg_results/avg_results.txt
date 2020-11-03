@@ -1,0 +1,323 @@
+fill, fric, pfill, pfric: 0.44, 0.13, 0.03, 0.44
+fill, fric, pfill, pfric: 0.83, 0.11, 0.07, 0.31
+fill, fric, pfill, pfric: 0.49, 0.11, 0.08, 0.33
+fill, fric, pfill, pfric: 0.81, 0.10, 0.09, 0.23
+fill, fric, pfill, pfric: 0.63, 0.17, 0.44, 0.10
+fill, fric, pfill, pfric: 0.72, 0.15, 0.27, 0.22
+fill, fric, pfill, pfric: 0.76, 0.12, 0.17, 0.48
+fill, fric, pfill, pfric: 0.63, 0.15, 0.45, 0.27
+fill, fric, pfill, pfric: 0.56, 0.09, 0.22, 0.16
+fill, fric, pfill, pfric: 0.73, 0.13, 0.25, 0.47
+fill, fric, pfill, pfric: 0.57, 0.11, 0.23, 0.33
+fill, fric, pfill, pfric: 0.74, 0.12, 0.23, 0.42
+fill, fric, pfill, pfric: 0.57, 0.10, 0.24, 0.26
+fill, fric, pfill, pfric: 0.71, 0.19, 0.30, 0.03
+fill, fric, pfill, pfric: 0.51, 0.07, 0.11, 0.06
+fill, fric, pfill, pfric: 0.73, 0.13, 0.25, 0.46
+fill, fric, pfill, pfric: 0.83, 0.09, 0.06, 0.20
+fill, fric, pfill, pfric: 0.55, 0.08, 0.20, 0.13
+fill, fric, pfill, pfric: 0.61, 0.20, 0.37, 0.02
+fill, fric, pfill, pfric: 0.80, 0.14, 0.11, 0.36
+Start goal idx: 0
+17 17
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 1
+
+Fall Rate: 0.70, success rate: 0.30
+Start goal idx: 1
+8 8
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 1
+
+Fall Rate: 0.30, success rate: 0.70
+Start goal idx: 2
+7 7
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 1
+
+Fall Rate: 0.50, success rate: 0.40
+Start goal idx: 3
+Empty Path! Skipping....
+Start goal idx: 4
+8 8
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 1
+
+Fall Rate: 0.00, success rate: 0.60
+Start goal idx: 5
+Empty Path! Skipping....
+Start goal idx: 6
+44 44
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 0
+
+Fall Rate: 0.60, success rate: 0.10
+Start goal idx: 7
+17 17
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 1
+
+Fall Rate: 0.10, success rate: 0.60
+Start goal idx: 8
+Empty Path! Skipping....
+Start goal idx: 9
+27 27
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 1
+
+Fall Rate: 0.30, success rate: 0.70
+Start goal idx: 10
+61 61
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 1
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 0
+
+Fall Rate: 0.60, success rate: 0.10
+Start goal idx: 11
+42 42
+New Test with params: fill, fric, pfill, pfric: 0.81, 0.13, 0.08, 0.50
+Exec #0: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.35, 0.16, 0.01, 0.20
+Exec #1: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.68, 0.15, 0.41, 0.27
+Exec #2: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.45, 0.14, 0.04, 0.35
+Exec #3: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.18, 0.20, 0.06
+Exec #4: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.75, 0.09, 0.20, 0.20
+Exec #5: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.52, 0.18, 0.14, 0.06
+Exec #6: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.67, 0.06, 0.42, 0.03
+Exec #7: fell: 0, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.47, 0.18, 0.06, 0.09
+Exec #8: fell: 1, success: 0
+
+New Test with params: fill, fric, pfill, pfric: 0.87, 0.10, 0.03, 0.26
+Exec #9: fell: 0, success: 0
+
+Fall Rate: 0.30, success rate: 0.00
