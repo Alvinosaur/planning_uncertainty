@@ -7,6 +7,7 @@ import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
 import scipy.stats
+import typing as T
 
 from sim_objects import Arm, Bottle
 
@@ -91,7 +92,7 @@ class Environment(object):
         # if no object moves more than this thresh, terminate sim early
         self.no_movement_thresh = 0.001
         self.min_iters = 10  # enough iters to let action execute fully
-        self.max_iters = 150  # max number of iters in case objects oscillating
+        self.max_iters = 300  # max number of iters in case objects oscillating
         # number of random samples of internal params for stochastic simulation
         self.num_rand_samples = 10
 
@@ -134,7 +135,7 @@ class Environment(object):
     def run_multiple_sims(self, action, sim_params_set, init_joints=None,
                           bottle_pos=None, bottle_ori=None):
         """
-        Simply run multiple simulations with different environmental parameters.
+        Simply run multiple simulations with different bottle parameters.
         Return a list of all results, each entry as a tuple. Let the planner do
         post-processing of these results.
         """
@@ -148,7 +149,7 @@ class Environment(object):
             all_results.append(results)
 
             # extra optimization: if arm didn't touch bottle, no need for more
-            # iterations
+            # iterations since different bottle friction/mass won't change outcome
             (_, is_collision, new_bottle_pos, _, _) = results
             if not is_collision:
                 break
@@ -156,11 +157,10 @@ class Environment(object):
         return all_results
 
     def run_sim(self, action, sim_params: EnvParams, init_joints=None, bottle_pos=None, bottle_ori=None):
-        """Deterministic simulation where all parameters are already set and
-        known.
-
-        Arguments:
-            action {np.ndarray} -- offset in joint space, generated in ActionSpace
+        """
+        High-level interface with simulator: run simulation given some current state composed of 
+        bottle pose and arm joint poise. Specify some action to take. Generates a joint-space trajectory
+        for lower-level simulation function to execute. 
         """
         if init_joints is None:  # use arm's current joint state
             init_joints = self.arm.joint_pose
@@ -212,17 +212,29 @@ class Environment(object):
 
         iter = 0
         traj_len = joint_traj.shape[0]
+
+
+        # TEMPORARY
+        executed_traj = [self.arm.joint_pose]
+
         while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
             next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
             self.command_new_pose(next_joint_pose)
+            # print(self.arm.joint_pose)
 
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
 
+            # TEMPORARY
+            executed_traj.append(self.arm.joint_pose)
+
             contacts = p.getContactPoints(
                 self.arm.kukaId, self.bottle.bottle_id)
+            # if len(contacts) > 0 and not is_collision:
+            #     print("COLLISION!!!")
+            #     print(iter)
             is_collision |= (len(contacts) > 0)
 
             # get feedback and vizualize trajectories
@@ -261,7 +273,7 @@ class Environment(object):
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
+        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose #, executed_traj
 
     def gen_random_env_param_set(self, num=1):
         rand_fills, rand_fill_probs = self.get_random_sample_prob(

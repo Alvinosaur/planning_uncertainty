@@ -170,15 +170,26 @@ class NaivePlanner():
         fall_prob_norm = 0
 
         # draw random param from set to determine next state and reward
-        num_iters = len(results)
-        rand_sample = np.random.randint(low=0, high=num_iters)
-        _, _, bpos, bori, next_joint_pos = results[rand_sample]
+        
+        bpos_bins = dict()  # state_key -> [state, bori, count]
 
         # NOTE: simulation automatically terminates if the arm doesn't touch
         # bottle since no need to simulate different bottle parameters
         # so num_iters <= self.num_rand_samples
+        num_iters = len(results)
         for i in range(num_iters):
             is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
+            bpos_disc = np.rint(bpos / self.dpos)
+            rot_mat = Quaternion(bori).rotation_matrix
+            z_axis = rot_mat @ np.array([0, 0, 1.0])
+            rot_angle = np.arccos(z_axis @ np.array([0, 0, 1.0]))
+            rot_angle_disc = round(rot_angle/ self.da)
+            key = (tuple(bpos_disc), rot_angle_disc)
+
+            if key in bpos_bins:
+                bpos_bins[key][-1] += 1
+            else:
+                bpos_bins[key] = [bpos, bori, next_joint_pos, 1]
 
             # weighted sum of fall counts: sum(pi*xi) / sum(pi)
             avg_fall_prob += is_fallen * self.param_probs[i]
@@ -186,6 +197,12 @@ class NaivePlanner():
 
         # normalize by sum of weights (not all but only up to num_iters)
         fall_proportion = avg_fall_prob / fall_prob_norm
+
+        # find mode of next state
+        max_key = max(bpos_bins, key=lambda k:bpos_bins[k][-1])
+        [bpos, bori, next_joint_pos, count] = bpos_bins[max_key]
+        # print(bpos_bins[max_key][-1])
+        # print(self.state_to_str(bpos), self.state_to_str(bori))
 
         return (fall_proportion, bpos, bori, next_joint_pos)
 
@@ -281,7 +298,9 @@ class NaivePlanner():
                      next_bottle_ori, next_joint_pose) = (
                          self.process_multiple_sim_results(results))
                     invalid = fall_prob > self.fall_proportion_thresh
-                    print(invalid, fall_prob)
+                    # print(invalid, fall_prob)
+
+                # print("Is fallen: %d, action: %s" % (invalid, action))
 
                 # completely ignore actions that knock over bottle with high
                 # probability
@@ -333,7 +352,7 @@ class NaivePlanner():
 
                     # build directed graph
                     transitions[next_state_key] = (state, ai)
-                    print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
+                    # print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
 
         print("States Expanded: %d, found goal: %d" %
               (num_expansions, goal_expanded))

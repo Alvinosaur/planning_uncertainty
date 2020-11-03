@@ -11,22 +11,41 @@ from naive_joint_space_planner import NaivePlanner
 import experiment_helpers as helpers
 
 
-def policy_to_full_traj(state_path, init_joints, policy):
-    piecewise_trajs = []
-    print(len(state_path), len(policy))
-    cur_joints = init_joints
+def policy_to_full_traj(init_joints, policy, state_path, use_policy=False):
+    cur_joints_policy = np.copy(init_joints)
+    cur_joints_state = np.copy(init_joints)
+    piecewise_trajs_policy = []
+    piecewise_trajs_state = []
     for i, (dq_vec, num_iters) in enumerate(policy):
-        # target_joints = cur_joints + dq_vec
-        target_joints = state_path[i][3:]
-        traj = np.linspace(
-            start=cur_joints, stop=target_joints, num=num_iters)
-        piecewise_trajs.append(traj)
-        cur_joints = target_joints
+
+        target_joints_policy = cur_joints_policy + dq_vec
+        target_joints_state = state_path[i][3:]
+
+        piecewise_trajs_policy.append(np.linspace(
+            start=cur_joints_policy, stop=target_joints_policy, num=num_iters))
+        piecewise_trajs_state.append(np.linspace(
+            start=cur_joints_state, stop=target_joints_state, num=num_iters))
+
+        cur_joints_policy = target_joints_policy
+        cur_joints_state = target_joints_state
+
     try:
-        full_arm_traj = np.vstack(piecewise_trajs)
-    except:
-        return []
-    return full_arm_traj
+        if use_policy:
+            full_arm_traj = np.vstack(piecewise_trajs_policy)
+        else:
+            full_arm_traj = np.vstack(piecewise_trajs_state)
+    except Exception as e:
+        print("Couldn't stack piecewise trajectories b/c %s" % e)
+        if use_policy:
+            print("Trajectories (use_policy: %d): " %
+                  use_policy, piecewise_trajs_policy)
+        else:
+            print("Trajectories (use_policy: %d): " %
+                  use_policy, piecewise_trajs_state)
+        full_arm_traj = []
+
+    return np.vstack(piecewise_trajs_policy), np.vstack(piecewise_trajs_state)
+    # return full_arm_traj
 
 
 def direct_plan_execution(planner: NaivePlanner, env: Environment,
@@ -50,9 +69,11 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         if len(policy) == 0:
             print("Empty Path! Skipping....")
             return
+    
+    print(state_path)
+
 
     if play_results:
-        # print(policy)
         bottle_pos = planner.bottle_pos_from_state(planner.start)
         init_joints = planner.joint_pose_from_state(planner.start)
         env.arm.reset(init_joints)
@@ -66,13 +87,13 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             replaceItemUniqueId=env.goal_line_id,
             lifeTime=0)
 
-        full_arm_traj = policy_to_full_traj(state_path, init_joints, policy)
+        full_arm_traj_policy, full_arm_traj_state = policy_to_full_traj(init_joints, policy, state_path, use_policy=False)
         fall_count = 0
         success_count = 0
         for i, exec_params in enumerate(exec_params_set):
             print("New Test with params: %s" % exec_params)
             is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos = (
-                env.simulate_plan(joint_traj=full_arm_traj,
+                env.simulate_plan(joint_traj=full_arm_traj_state.copy(),
                                   bottle_pos=bottle_pos,
                                   bottle_ori=bottle_ori,
                                   sim_params=exec_params))
@@ -82,32 +103,33 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             print()
             success_count += is_success
             fall_count += is_fallen
-            # break
 
         print("Fall Rate: %.2f, success rate: %.2f" % (
             fall_count / float(len(exec_params_set)),
             success_count / float(len(exec_params_set))
         ))
 
-        # joint_traj = np.vstack(joint_traj)
+        # executed_traj = np.vstack(executed_traj)
 
         # fig, plots = plt.subplots(2, 4)
-        # print(len(plots))
-        # print(len(plots[0]))
+        # collision_t = 2747
         # for i in range(planner.env.arm.num_joints):
         #     r = i // 4
         #     c = i % 4
-        #     print(r, c)
-        #     plots[r][c].plot(full_arm_traj[:, i], label="target traj")
-        #     plots[r][c].plot(joint_traj[:, i], label="actual traj")
+        #     plots[r][c].plot(full_arm_traj_policy[:, i], label="Policy traj")
+        #     plots[r][c].plot(full_arm_traj_state[:, i], label="State traj")
+        #     plots[r][c].axvline(x=collision_t, ymin=-5, ymax=5, c='g', label="Collision")
+        #     # plots[r][c].plot(executed_traj[:, i], label="Executed traj")
+            
         #     plots[r][c].set_title("Joint %d" % i)
         
+        # plots[1][2].legend()
         # plt.show()
 
 
 def main():
     VISUALIZE = True
-    REPLAY_RESULTS = True
+    REPLAY_RESULTS = False
     LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
     GRAVITY = -9.81
@@ -226,11 +248,11 @@ def main():
         planner = avg_planner
         planner_folder = "avg_results"
 
-    start_goal_idx = 11
+    start_goal_idx = 10
     (startb, goalb, start_joints) = start_goals[start_goal_idx]
-    # start_joints = [ 1.30108883 ,1.27731937 , 2.96705972 , 0.80271445, -2.15213113 , 0.97012585,
-#   0.16352632]
-
+    startb =      [0.42691895 ,0.56569359, 0.04906958 ]
+    start_joints =       [1.00454656 ,1.34184254 ,2.80407075,
+  0.80206976, 1.8428638 , 2.08643242, 0.1634396 ]
     start_state = helpers.bottle_EE_to_state(
         bpos=startb, arm=arm, joints=start_joints)
     goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
