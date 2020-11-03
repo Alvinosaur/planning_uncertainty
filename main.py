@@ -4,6 +4,7 @@ import math
 import numpy as np
 import pickle
 import matplotlib.pyplot as plt
+import typing as T
 
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace, EnvParams
@@ -11,7 +12,28 @@ from naive_joint_space_planner import NaivePlanner
 import experiment_helpers as helpers
 
 
-def policy_to_full_traj(init_joints, policy, state_path, use_policy=False):
+def policy_to_full_traj(init_joints: np.ndarray,
+                        policy: T.List[T.Tuple[np.ndarray, int]],
+                        state_path: T.Tuple[np.ndarray],
+                        use_policy: bool = False):
+    """Given a planned sequence of (state, action), create a single continuous 
+    trajectory to excecute plan smoothly. Have option to either use actions 
+    to generate next states along trajectory, or interpolate between the states
+    encountered by planner.
+
+    use_policy=True: recursively apply s = s + a_k
+    use_policy=False: s_k = state_path[k]
+
+    Args:
+        init_joints (np.ndarray): initial arm joint configuration
+        policy (List[Tuple[np.ndarray, int]]): actions and their durations taken during plan
+        state_path (List[np.ndarray]): states along planned path
+        use_policy (bool, optional): whether to use actions or state path
+        directly to generate trajectory. Defaults to False.
+
+    Returns:
+        [type]: [description]
+    """
     cur_joints_policy = np.copy(init_joints)
     cur_joints_state = np.copy(init_joints)
     piecewise_trajs_policy = []
@@ -45,7 +67,6 @@ def policy_to_full_traj(init_joints, policy, state_path, use_policy=False):
         full_arm_traj = []
 
     return np.vstack(piecewise_trajs_policy), np.vstack(piecewise_trajs_state)
-    # return full_arm_traj
 
 
 def direct_plan_execution(planner: NaivePlanner, env: Environment,
@@ -69,9 +90,8 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         if len(policy) == 0:
             print("Empty Path! Skipping....")
             return
-    
-    print(state_path)
 
+    print(state_path)
 
     if play_results:
         bottle_pos = planner.bottle_pos_from_state(planner.start)
@@ -87,7 +107,8 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
             replaceItemUniqueId=env.goal_line_id,
             lifeTime=0)
 
-        full_arm_traj_policy, full_arm_traj_state = policy_to_full_traj(init_joints, policy, state_path, use_policy=False)
+        full_arm_traj_policy, full_arm_traj_state = policy_to_full_traj(
+            init_joints, policy, state_path, use_policy=False)
         fall_count = 0
         success_count = 0
         for i, exec_params in enumerate(exec_params_set):
@@ -120,9 +141,9 @@ def direct_plan_execution(planner: NaivePlanner, env: Environment,
         #     plots[r][c].plot(full_arm_traj_state[:, i], label="State traj")
         #     plots[r][c].axvline(x=collision_t, ymin=-5, ymax=5, c='g', label="Collision")
         #     # plots[r][c].plot(executed_traj[:, i], label="Executed traj")
-            
+
         #     plots[r][c].set_title("Joint %d" % i)
-        
+
         # plots[1][2].legend()
         # plt.show()
 
@@ -250,9 +271,9 @@ def main():
 
     start_goal_idx = 10
     (startb, goalb, start_joints) = start_goals[start_goal_idx]
-    startb =      [0.42691895 ,0.56569359, 0.04906958 ]
-    start_joints =       [1.00454656 ,1.34184254 ,2.80407075,
-  0.80206976, 1.8428638 , 2.08643242, 0.1634396 ]
+    startb = [0.42691895, 0.56569359, 0.04906958]
+    start_joints = [1.00454656, 1.34184254, 2.80407075,
+                    0.80206976, 1.8428638, 2.08643242, 0.1634396]
     start_state = helpers.bottle_EE_to_state(
         bpos=startb, arm=arm, joints=start_joints)
     goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
