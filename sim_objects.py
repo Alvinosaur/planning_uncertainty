@@ -74,8 +74,14 @@ class Bottle:
             return np.array([0, 0, water_height * 0.4])
 
     def create_sim_bottle(self, pos=None, ori=None):
-        if self.bottle_id is not None:
-            p.removeBody(self.bottle_id)
+        self.col_id = p.createCollisionShape(
+            shapeType=p.GEOM_CYLINDER,
+            radius=self.radius,
+            height=self.height)
+        # below line not needed because p.resetSimulation() already
+        # deletes all objects
+        # if self.bottle_id is not None:
+        #     p.removeBody(self.bottle_id)
         if ori is None:
             ori = [0, 0, 0, 1]
         if pos is not None:

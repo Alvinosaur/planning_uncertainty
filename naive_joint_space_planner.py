@@ -246,9 +246,7 @@ class NaivePlanner():
             n = heapq.heappop(open_set)
             state = n.state
             state_key = self.state_to_key(state)
-            # bottle_ori = n.bottle_ori
-            bottle_ori = (0.0026187291714050995, -0.004879883571338285,
-                          0.022965183428114815, 0.9997209257307611)
+            bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
             guided_bottle_pos = self.get_guided_bottle_pos(bottle_pos)
@@ -276,7 +274,7 @@ class NaivePlanner():
 
             # explore all actions from this state
             # for ai in self.A.action_ids:
-            for ai in [10]:
+            for ai in self.A.action_ids:
                 # action defined as an offset of joint angles of arm
                 action = self.A.get_action(ai)
 
@@ -306,18 +304,18 @@ class NaivePlanner():
                 # print("Is fallen: %d, action: %s" % (invalid, action))
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
-                if np.allclose(state, np.array([0.29168124, 0.69920135, 0.03451005, 1.33174975,
-                                                1.33852474, 2.96621596,
-                                                0.8019089, 2.00636202, 1.61550883, 0.16327888])):
-                    print("state:")
-                    print(state)
-                    print(bottle_ori)
-                    print("next state:")
-                    print(next_state)
-                    print(ai)
-                    print(action)
-                    print(invalid, next_state_key in closed_set)
-                    print("YES!")
+                # if np.allclose(state, np.array([0.29168124, 0.69920135, 0.03451005, 1.33174975,
+                #                                 1.33852474, 2.96621596,
+                #                                 0.8019089, 2.00636202, 1.61550883, 0.16327888])):
+                #     print("state:")
+                #     print(state)
+                #     print(bottle_ori)
+                #     print("next state:")
+                #     print(next_state)
+                #     print(ai)
+                #     print(action)
+                #     print(invalid, next_state_key in closed_set)
+                #     print("YES!")
 
                 # completely ignore actions that knock over bottle with high
                 # probability
@@ -370,8 +368,6 @@ class NaivePlanner():
                     # build directed graph
                     transitions[next_state_key] = (state, ai)
                     # print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
-
-                exit()
 
         print("States Expanded: %d, found goal: %d" %
               (num_expansions, goal_expanded))

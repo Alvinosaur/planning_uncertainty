@@ -75,6 +75,7 @@ class Environment(object):
     INF = 1e10
     SIM_AVG = 0
     SIM_MOST_COMMON = 1
+    GRAVITY = -9.81
 
     def __init__(self, arm, bottle, is_viz=True):
         # store arm and objects
@@ -172,6 +173,14 @@ class Environment(object):
 
         return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori, sim_params=sim_params)
 
+    def reset(self):
+        p.resetSimulation()
+        p.setGravity(0, 0, self.GRAVITY)
+        p.loadURDF(self.plane_urdf_filepath,
+                   basePosition=[0, 0, -0.01])
+        self.arm.kukaId = p.loadURDF(
+            self.arm_filepath, basePosition=[0, 0, 0])
+
     def command_new_pose(self, joint_pose):
         for ji, jval in enumerate(joint_pose):
             p.setJointMotorControl2(bodyIndex=self.arm.kukaId,
@@ -191,7 +200,7 @@ class Environment(object):
         Returns:
             [type] -- [description]
         """
-        print(sim_params)
+        self.reset()
         self.arm.reset(joint_traj[0, :])
         init_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
@@ -214,9 +223,6 @@ class Environment(object):
         iter = 0
         traj_len = joint_traj.shape[0]
 
-        # TEMPORARY
-        executed_traj = [self.arm.joint_pose]
-
         while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
             # set target joint pose
             next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
@@ -226,9 +232,6 @@ class Environment(object):
             # run one sim iter
             p.stepSimulation()
             self.arm.update_joint_pose()
-
-            # TEMPORARY
-            executed_traj.append(self.arm.joint_pose)
 
             contacts = p.getContactPoints(
                 self.arm.kukaId, self.bottle.bottle_id)
@@ -287,6 +290,7 @@ class Environment(object):
             [type] -- [description]
         """
         # create new bottle object with parameters set beforehand
+        self.reset()
         self.bottle.set_fill_proportion(sim_params.bottle_fill)
         self.bottle.lat_fric = sim_params.bottle_fric
         if bottle_pos is not None:
@@ -296,6 +300,7 @@ class Environment(object):
 
         # start arm planned motion
         self.arm.reset(init_joints)
+        executed_traj = []
         for (dq_vec, num_iters) in policy:
             target_joints = self.arm.joint_pose + dq_vec
 
@@ -316,6 +321,12 @@ class Environment(object):
                 if self.is_viz:
                     time.sleep(0.002)
 
+            self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
+                self.bottle.bottle_id)
+
+            state = np.concatenate([self.bottle.pos, self.arm.joint_pose])
+            executed_traj.append(state)
+
         # generate cost and final position
         is_fallen = self.bottle.check_is_fallen()
         self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
@@ -325,7 +336,7 @@ class Environment(object):
         p.removeBody(self.bottle.bottle_id)
 
         # , executed_traj
-        return is_fallen, True, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
+        return is_fallen, True, self.bottle.pos, self.bottle.ori, self.arm.joint_pose, executed_traj
 
     def gen_random_env_param_set(self, num=1):
         rand_fills, rand_fill_probs = self.get_random_sample_prob(
