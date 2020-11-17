@@ -158,9 +158,9 @@ class Environment(object):
 
     def run_sim(self, action, sim_params: EnvParams, init_joints=None, bottle_pos=None, bottle_ori=None):
         """
-        High-level interface with simulator: run simulation given some current state composed of 
+        High-level interface with simulator: run simulation given some current state composed of
         bottle pose and arm joint poise. Specify some action to take. Generates a joint-space trajectory
-        for lower-level simulation function to execute. 
+        for lower-level simulation function to execute.
         """
         if init_joints is None:  # use arm's current joint state
             init_joints = self.arm.joint_pose
@@ -191,6 +191,7 @@ class Environment(object):
         Returns:
             [type] -- [description]
         """
+        print(sim_params)
         self.arm.reset(joint_traj[0, :])
         init_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
@@ -213,7 +214,6 @@ class Environment(object):
         iter = 0
         traj_len = joint_traj.shape[0]
 
-
         # TEMPORARY
         executed_traj = [self.arm.joint_pose]
 
@@ -221,7 +221,7 @@ class Environment(object):
             # set target joint pose
             next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
             self.command_new_pose(next_joint_pose)
-            # print(self.arm.joint_pose)
+            # print(np.concatenate([self.bottle.pos, self.arm.joint_pose]))
 
             # run one sim iter
             p.stepSimulation()
@@ -273,7 +273,59 @@ class Environment(object):
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
-        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose #, executed_traj
+        # , executed_traj
+        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
+
+    def simulate_plan_online(self, init_joints, policy, bottle_pos, bottle_ori, sim_params: EnvParams):
+        """Run simulation with given joint-space trajectory. Does not reset arm
+        joint angles after simulation is done, so that value can be guaranteed to be untouched.
+
+        Arguments:
+            joint_traj {[type]} -- N x num_DOF trajectory of joints
+
+        Returns:
+            [type] -- [description]
+        """
+        # create new bottle object with parameters set beforehand
+        self.bottle.set_fill_proportion(sim_params.bottle_fill)
+        self.bottle.lat_fric = sim_params.bottle_fric
+        if bottle_pos is not None:
+            self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
+        else:
+            self.bottle.create_sim_bottle(ori=bottle_ori)
+
+        # start arm planned motion
+        self.arm.reset(init_joints)
+        for (dq_vec, num_iters) in policy:
+            target_joints = self.arm.joint_pose + dq_vec
+
+            joint_traj = np.linspace(
+                start=self.arm.joint_pose, stop=target_joints, num=num_iters)
+            assert(len(joint_traj) == num_iters)
+
+            for i in range(num_iters):
+                next_joints = joint_traj[i, :]
+
+                self.command_new_pose(next_joints)
+                # print(np.concatenate([self.bottle.pos, self.arm.joint_pose]))
+
+                # run one sim iter
+                p.stepSimulation()
+                self.arm.update_joint_pose()
+
+                if self.is_viz:
+                    time.sleep(0.002)
+
+        # generate cost and final position
+        is_fallen = self.bottle.check_is_fallen()
+        self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
+            self.bottle.bottle_id)
+
+        # remove bottle object, can't just reset pos since need to change params each iter
+        p.removeBody(self.bottle.bottle_id)
+
+        # , executed_traj
+        return is_fallen, True, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
 
     def gen_random_env_param_set(self, num=1):
         rand_fills, rand_fill_probs = self.get_random_sample_prob(
@@ -290,7 +342,7 @@ class Environment(object):
             param_set.append(param)
         return param_set
 
-    @staticmethod
+    @ staticmethod
     def get_random_sample_prob(distrib, minv, maxv, num=1):
         """get N random samples and their "probability"
         Args:
@@ -312,7 +364,7 @@ class Environment(object):
             probs.append(p)
         return rand_vars, probs
 
-    @staticmethod
+    @ staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime,
                   replaceItemUniqueId=None):
         if replaceItemUniqueId is not None:
@@ -322,7 +374,7 @@ class Environment(object):
             return p.addUserDebugLine(lineFrom, lineTo, lineColorRGB,
                                       lineWidth, lifeTime)
 
-    @staticmethod
+    @ staticmethod
     def avg_quaternion(quaternions):
         """Finds average of quaternions from this post. Doesn't seem to work
         too well though.
