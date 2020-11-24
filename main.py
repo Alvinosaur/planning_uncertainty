@@ -5,6 +5,8 @@ import numpy as np
 import pickle
 import matplotlib.pyplot as plt
 import re
+import time
+import sys
 
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace, EnvParams
@@ -175,20 +177,15 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
         bottle_ori = np.array([0, 0, 0, 1])
 
         bottle_goal = planner.bottle_pos_from_state(planner.goal)
-        env.goal_line_id = env.draw_line(
-            lineFrom=bottle_goal,
-            lineTo=bottle_goal + np.array([0, 0, 1]),
-            lineColorRGB=[0, 0, 1], lineWidth=1,
-            replaceItemUniqueId=env.goal_line_id,
-            lifeTime=0)
 
         fall_count = 0
         success_count = 0
         for i, exec_params in enumerate(exec_params_set):
             print("New Test with params: %s" % exec_params)
             cur_joints = init_joints
-            cur_bottle_pos = bottle_pos
-            cur_bottle_ori = bottle_ori
+            cur_bottle_pos = bottle_pos.copy()
+            cur_bottle_ori = bottle_ori.copy()
+            print(bottle_pos, bottle_ori, flush=True)
             is_fallen = False
             executed_traj = []
 
@@ -198,10 +195,27 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
                 # print(np.concatenate([cur_bottle_pos, cur_joints]))
                 # print(cur_bottle_ori)
                 # action, sim_params: EnvParams, init_joints=None, bottle_pos=None, bottle_ori=None
+                env.goal_line_id = env.draw_line(
+                    lineFrom=bottle_goal,
+                    lineTo=bottle_goal + np.array([0, 0, 1]),
+                    lineColorRGB=[0, 0, 1], lineWidth=1,
+                    replaceItemUniqueId=env.goal_line_id,
+                    lifeTime=0)
                 step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
                     env.run_sim(policy[step], exec_params,
                                 cur_joints, cur_bottle_pos, cur_bottle_ori)
                 )
+                env.goal_line_id = env.draw_line(
+                    lineFrom=bottle_goal,
+                    lineTo=bottle_goal + np.array([0, 0, 1]),
+                    lineColorRGB=[0, 0, 1], lineWidth=1,
+                    replaceItemUniqueId=env.goal_line_id,
+                    lifeTime=0)
+                # env.draw_line(
+                #     lineFrom=bottle_goal,
+                #     lineTo=bottle_goal + np.array([0, 0, 1]),
+                #     lineColorRGB=[0, 0, 1], lineWidth=1,
+                #     lifeTime=0)
                 # print("next state:")
                 # print(np.concatenate([cur_bottle_pos, cur_joints]))
                 # print(policy[step])
@@ -227,24 +241,24 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             # # ith policy led to ith state
             # print(policy[indices[0]])
 
-            fig, plots = plt.subplots(3, 4)
-            for i in range(planner.env.arm.num_joints):
-                r = i // 4 + 1
-                c = i % 4
-                plots[r][c].plot(state_path[:, i+3], label="State traj")
-                plots[r][c].plot(executed_traj[:, i+3], label="Executed traj")
-                plots[r][c].set_title("Joint %d" % i)
+            # fig, plots = plt.subplots(3, 4)
+            # for i in range(planner.env.arm.num_joints):
+            #     r = i // 4 + 1
+            #     c = i % 4
+            #     plots[r][c].plot(state_path[:, i+3], label="State traj")
+            #     plots[r][c].plot(executed_traj[:, i+3], label="Executed traj")
+            #     plots[r][c].set_title("Joint %d" % i)
 
-            xyz_labels = "xyz"
-            for i in range(3):
-                r = 0
-                c = i
-                plots[r][c].plot(state_path[:, i], label="State traj")
-                plots[r][c].plot(executed_traj[:, i], label="Executed traj")
-                plots[r][c].set_title("Bottle pos %s" % xyz_labels[i])
+            # xyz_labels = "xyz"
+            # for i in range(3):
+            #     r = 0
+            #     c = i
+            #     plots[r][c].plot(state_path[:, i], label="State traj")
+            #     plots[r][c].plot(executed_traj[:, i], label="Executed traj")
+            #     plots[r][c].set_title("Bottle pos %s" % xyz_labels[i])
 
-            plots[1][2].legend()
-            plt.show()
+            # plots[1][2].legend()
+            # plt.show()
 
         print("Fall Rate: %.2f, success rate: %.2f" % (
             fall_count / float(len(exec_params_set)),
@@ -253,7 +267,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
 
 def main():
-    VISUALIZE = False
+    VISUALIZE = True
     REPLAY_RESULTS = True
     LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
@@ -265,7 +279,7 @@ def main():
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
     p.setGravity(0, 0, GRAVITY)
     planeId = p.loadURDF(Environment.plane_urdf_filepath,
-                         basePosition=[0, 0, -0.01])
+                         basePosition=[0, 0, 0])
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
         log_id = p.startStateLogging(
@@ -316,6 +330,24 @@ def main():
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
 
+    # (startb, goalb, start_joints) = start_goals[5]
+    # start_goals[5] = (startb, [0.40,
+    #                            0.4732376897585052, 0.03803531856053188], start_joints)
+
+    # (startb, goalb, start_joints) = start_goals[8]
+    # start_goals[8] = (startb, [0.34, 0.46, 0], start_joints)
+    # for i, pair in enumerate(start_goals):
+    #     (startb, goalb, start_joints) = pair
+    #     startb[-1] = bottle.PLANE_OFFSET
+    #     start_goals[i] = (startb, goalb, start_joints)
+
+    # ignore_list = {8, }
+    # new_start_goals = []
+    # for i in range(len(start_goals)):
+    #     if i not in ignore_list:
+    #         new_start_goals.append(start_goals[i])
+    # with open("filtered_start_goals.obj", "wb") as f:
+    #     pickle.dump(new_start_goals, f)
     # for i, (startb, goalb, start_joints) in enumerate(start_goals):
     #     print(startb, goal)
     #     if np.linalg.norm(np.array(startb) - np.array(goalb)) <= dist_thresh:
@@ -367,7 +399,7 @@ def main():
     avg_planner.sim_params_set = plan_params_sets[:10]
 
     # pick which planner to use
-    use_single = True
+    use_single = False
     if use_single:
         planner = single_planner
         planner_folder = "results"
@@ -375,13 +407,9 @@ def main():
         planner = avg_planner
         planner_folder = "avg_results"
 
-    start_goal_idx = 10
-    res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
-    (startb, goalb, start_joints) = start_goals[start_goal_idx]
-    # start_str = "[ 0.29652703  0.69731513  0.03605414  1.33218853  1.33759064  2.80334684 0.80144996  1.84316952  1.13139582  0.16003776]"
-    # start_temp = re.findall("(\d+.\d+)", start_str)
-    # start_temp = [float(v) for v in start_temp]
-    # startb, start_joints = start_temp[:3], start_temp[3:]
+    # start_goal_idx = 10
+    # res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
+    # (startb, goalb, start_joints) = start_goals[start_goal_idx]
 
     # try:
     #     results = np.load("%s.npz" % res_fname, allow_pickle=True)
@@ -391,40 +419,51 @@ def main():
 
     # policy = results["policy"]
     # state_path = results["state_path"]
-    # startb, start_joints = state_path[21, :3], state_path[21, 3:]
+    # idx = 23
+    # startb, start_joints = state_path[idx, :3], state_path[idx, 3:]
 
-    start_state = helpers.bottle_EE_to_state(
-        bpos=startb, arm=arm, joints=start_joints)
-    goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
-    planner.start = start_state
-    planner.goal = goal_state
-    # piecewise_execution
-    piecewise_execution(planner, env,
-                        exec_params_set=plan_params_sets[0:1],
-                        load_saved=LOAD_SAVED,
-                        play_results=REPLAY_RESULTS,
-                        res_fname=res_fname)
+    # start_state = helpers.bottle_EE_to_state(
+    #     bpos=startb, arm=arm, joints=start_joints)
+    # goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
+    # planner.start = start_state
+    # planner.goal = goal_state
+    # # piecewise_execution
+    # piecewise_execution(planner, env,
+    #                     exec_params_set=planner.sim_params_set,
+    #                     load_saved=LOAD_SAVED,
+    #                     play_results=REPLAY_RESULTS,
+    #                     res_fname=res_fname)
 
-    # for pi, planner in enumerate([avg_planner, single_planner]):
-    #     if pi == 1:
-    #         planner_folder = "results"
-    #     else:
-    #         planner_folder = "avg_results"
-    #         continue
+    plan_to_time = [0, 0]
+    for pi, planner in enumerate([avg_planner, single_planner]):
+        if pi == 0:
+            planner_folder = "results"
+        else:
+            planner_folder = "avg_results"
 
-    #     for start_goal_idx in range(12):
-    #         print("Start goal idx: %d" % start_goal_idx)
-    #         (startb, goalb, start_joints) = start_goals[start_goal_idx]
-    #         start_state = helpers.bottle_EE_to_state(
-    #             bpos=startb, arm=arm, joints=start_joints)
-    #         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
-    #         planner.start = start_state
-    #         planner.goal = goal_state
-    #         direct_plan_execution(planner, env,
-    #                               exec_params_set=exec_params_set,
-    #                               load_saved=LOAD_SAVED,
-    #                               play_results=REPLAY_RESULTS,
-    #                               res_fname="%s/results_%d" % (planner_folder, start_goal_idx))
+        # sys.stdout = open("%s/output.txt" % planner_folder, "w")
+
+        for start_goal_idx in range(0, 12):
+            print("Start goal idx: %d" % start_goal_idx)
+            res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
+            (startb, goalb, start_joints) = start_goals[start_goal_idx]
+            start_state = helpers.bottle_EE_to_state(
+                bpos=startb, arm=arm, joints=start_joints)
+            goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
+            planner.start = start_state
+            planner.goal = goal_state
+            start_time = time.time()
+            piecewise_execution(planner, env,
+                                exec_params_set=exec_params_set,
+                                load_saved=LOAD_SAVED,
+                                play_results=REPLAY_RESULTS,
+                                res_fname=res_fname)
+
+            time_taken = time.time() - start_time
+            plan_to_time[pi] += time_taken
+            print("time taken: %.3f" % time_taken, flush=True)
+
+    print("Average time: ", plan_to_time)
 
 
 if __name__ == "__main__":

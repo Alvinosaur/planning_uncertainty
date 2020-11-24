@@ -251,13 +251,6 @@ class NaivePlanner():
             bottle_pos = self.bottle_pos_from_state(state)
             guided_bottle_pos = self.get_guided_bottle_pos(bottle_pos)
 
-            if self.visualize:
-                self.env.target_line_id = self.env.draw_line(
-                    lineFrom=guided_bottle_pos,
-                    lineTo=guided_bottle_pos + np.array([0, 0, 1]),
-                    lineColorRGB=[1, 0, 0], lineWidth=1,
-                    replaceItemUniqueId=self.env.target_line_id,
-                    lifeTime=10)
             print(n)
             if state_key in closed_set:
                 continue
@@ -275,6 +268,16 @@ class NaivePlanner():
             # explore all actions from this state
             # for ai in self.A.action_ids:
             for ai in self.A.action_ids:
+                if self.visualize:
+                    vertical_offset = np.array([0, 0, 0.5])
+                    goal_bpos = self.bottle_pos_from_state(self.goal)
+                    self.env.goal_line_id = self.env.draw_line(
+                        lineFrom=goal_bpos,
+                        lineTo=goal_bpos + vertical_offset,
+                        lineColorRGB=[0, 0, 1], lineWidth=1,
+                        replaceItemUniqueId=self.env.goal_line_id,
+                        lifeTime=0)
+
                 # action defined as an offset of joint angles of arm
                 action = self.A.get_action(ai)
 
@@ -304,18 +307,6 @@ class NaivePlanner():
                 # print("Is fallen: %d, action: %s" % (invalid, action))
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
                 next_state_key = self.state_to_key(next_state)
-                # if np.allclose(state, np.array([0.29168124, 0.69920135, 0.03451005, 1.33174975,
-                #                                 1.33852474, 2.96621596,
-                #                                 0.8019089, 2.00636202, 1.61550883, 0.16327888])):
-                #     print("state:")
-                #     print(state)
-                #     print(bottle_ori)
-                #     print("next state:")
-                #     print(next_state)
-                #     print(ai)
-                #     print(action)
-                #     print(invalid, next_state_key in closed_set)
-                #     print("YES!")
 
                 # completely ignore actions that knock over bottle with high
                 # probability
@@ -409,7 +400,16 @@ class NaivePlanner():
 
         # fake bottle position to be behind bottle in the direction towards the goal
         if self.guided_direction:
-            bottle_pos = self.get_guided_bottle_pos(bottle_pos)
+            bottle_pos = self.get_guided_bottle_pos(
+                bottle_pos, dist_offset=0.1)
+        if self.visualize:
+            vertical_offset = np.array([0, 0, 0.5])
+            self.env.target_line_id = self.env.draw_line(
+                lineFrom=bottle_pos,
+                lineTo=bottle_pos + vertical_offset,
+                lineColorRGB=[1, 0, 0], lineWidth=1,
+                replaceItemUniqueId=self.env.target_line_id,
+                lifeTime=0)
 
         min_dist = None
         min_i = 0

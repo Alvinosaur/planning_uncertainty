@@ -13,8 +13,7 @@ class Bottle:
     WATER_DENSITY = 997    # kg/m³
     VOL_TO_MASS = 0.0296   # fl-oz to kg
     PLASTIC_MASS = 0.0127  # kg
-    PLANE_OFFSET = 0.056
-    INIT_PLANE_OFFSET = 0.03805010362200368  # found experimentally
+    PLANE_OFFSET = 0.095
     # PLANE_OFFSET = 0
     DEFAULT_RAD = 0.03175    # m
     DEFAULT_HEIGHT = 0.1905  # m
@@ -73,6 +72,11 @@ class Bottle:
         else:
             return np.array([0, 0, water_height * 0.4])
 
+    def update_pose(self):
+        self.pos, self.ori = p.getBasePositionAndOrientation(
+            self.bottle_id)
+        self.pos -= self.inertial_shift
+
     def create_sim_bottle(self, pos=None, ori=None):
         self.col_id = p.createCollisionShape(
             shapeType=p.GEOM_CYLINDER,
@@ -86,7 +90,7 @@ class Bottle:
             ori = [0, 0, 0, 1]
         if pos is not None:
             x, y, z = pos
-            pos = [x, y, z + self.PLANE_OFFSET]
+            pos = [x, y, z]
             self.bottle_id = p.createMultiBody(
                 baseMass=self.bottle_mass,
                 baseInertialFramePosition=self.inertial_shift,
@@ -95,7 +99,7 @@ class Bottle:
                 baseOrientation=ori)
         else:
             x, y, z = self.start_pos
-            pos = [x, y, z + self.PLANE_OFFSET]
+            pos = [x, y, z]
             self.bottle_id = p.createMultiBody(
                 baseMass=self.bottle_mass,
                 baseInertialFramePosition=self.inertial_shift,
@@ -103,6 +107,7 @@ class Bottle:
                 basePosition=self.start_pos,
                 baseOrientation=ori)
         self.pos = pos
+        self.ori = ori
         p.changeDynamics(
             bodyUniqueId=self.bottle_id,
             linkIndex=-1,  # no links, -1 refers to bottle base
@@ -110,10 +115,9 @@ class Bottle:
         )
 
     def check_is_fallen(self):
-        bottle_pos, bottle_ori = p.getBasePositionAndOrientation(
-            self.bottle_id)
+        self.update_pose()
         z_axis = np.array([0, 0, 1])
-        rot_mat = R.from_quat(bottle_ori).as_matrix()
+        rot_mat = R.from_quat(self.ori).as_matrix()
         new_z_axis = rot_mat @ z_axis
         angle = math.acos(z_axis @ new_z_axis /
                           (np.linalg.norm(z_axis) * np.linalg.norm(new_z_axis)))

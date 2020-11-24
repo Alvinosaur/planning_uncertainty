@@ -177,7 +177,7 @@ class Environment(object):
         p.resetSimulation()
         p.setGravity(0, 0, self.GRAVITY)
         p.loadURDF(self.plane_urdf_filepath,
-                   basePosition=[0, 0, -0.01])
+                   basePosition=[0, 0, 0])
         self.arm.kukaId = p.loadURDF(
             self.arm_filepath, basePosition=[0, 0, 0])
 
@@ -254,8 +254,7 @@ class Environment(object):
                 # time.sleep(self.SIM_VIZ_FREQ)
 
             # check status of other objects to possibly terminate sim early
-            self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
-                self.bottle.bottle_id)
+            self.bottle.update_pose()
             bottle_vert_stopped = math.isclose(
                 self.bottle.pos[2] - prev_bottle_pos[2],
                 0.0, abs_tol=1e-05)
@@ -269,9 +268,8 @@ class Environment(object):
             iter += 1
 
         # generate cost and final position
+        self.bottle.update_pose()
         is_fallen = self.bottle.check_is_fallen()
-        self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
-            self.bottle.bottle_id)
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
@@ -321,16 +319,14 @@ class Environment(object):
                 if self.is_viz:
                     time.sleep(0.002)
 
-            self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
-                self.bottle.bottle_id)
+            self.bottle.update_pose()
 
             state = np.concatenate([self.bottle.pos, self.arm.joint_pose])
             executed_traj.append(state)
 
         # generate cost and final position
+        self.bottle.update_pose()
         is_fallen = self.bottle.check_is_fallen()
-        self.bottle.pos, self.bottle.ori = p.getBasePositionAndOrientation(
-            self.bottle.bottle_id)
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
