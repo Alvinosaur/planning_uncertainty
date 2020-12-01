@@ -141,6 +141,7 @@ class Environment(object):
         post-processing of these results.
         """
         all_results = []
+        # print(np.array2string(action[0], precision=2))
         for sim_params in sim_params_set:
             results = self.run_sim(action=action,
                                    sim_params=sim_params,
@@ -148,6 +149,7 @@ class Environment(object):
                                    bottle_pos=np.copy(bottle_pos),
                                    bottle_ori=bottle_ori)
             all_results.append(results)
+            # print(str(sim_params) + " fallen: %d" % results[0])
 
             # extra optimization: if arm didn't touch bottle, no need for more
             # iterations since different bottle friction/mass won't change outcome
@@ -242,7 +244,7 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
-                time.sleep(0.002)
+                time.sleep(0.001)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory

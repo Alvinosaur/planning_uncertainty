@@ -14,146 +14,14 @@ from naive_joint_space_planner import NaivePlanner
 import experiment_helpers as helpers
 
 
-def policy_to_full_traj(init_joints, policy, state_path, use_policy=False):
-    cur_joints_policy = np.copy(init_joints)
-    cur_joints_state = np.copy(init_joints)
-    piecewise_trajs_policy = []
-    piecewise_trajs_state = []
-    for i, (dq_vec, num_iters) in enumerate(policy):
-
-        target_joints_policy = cur_joints_policy + dq_vec
-        target_joints_state = state_path[i][3:]
-        # if np.isclose(state_path[i][0], 0.29652703, atol=1e-7):
-        #     print(i)
-        #     exit()
-
-        piecewise_trajs_policy.append(np.linspace(
-            start=cur_joints_policy, stop=target_joints_policy, num=num_iters))
-        piecewise_trajs_state.append(np.linspace(
-            start=cur_joints_state, stop=target_joints_state, num=num_iters))
-
-        cur_joints_policy = target_joints_policy
-        cur_joints_state = target_joints_state
-
-    try:
-        if use_policy:
-            full_arm_traj = np.vstack(piecewise_trajs_policy)
-        else:
-            full_arm_traj = np.vstack(piecewise_trajs_state)
-    except Exception as e:
-        print("Couldn't stack piecewise trajectories b/c %s" % e)
-        if use_policy:
-            print("Trajectories (use_policy: %d): " %
-                  use_policy, piecewise_trajs_policy)
-        else:
-            print("Trajectories (use_policy: %d): " %
-                  use_policy, piecewise_trajs_state)
-        full_arm_traj = []
-
-    return np.vstack(piecewise_trajs_policy), np.vstack(piecewise_trajs_state)
-    # return full_arm_traj
-
-
-def direct_plan_execution(planner: NaivePlanner, env: Environment,
-                          exec_params_set,
-                          load_saved=False, play_results=False,
-                          res_fname="results"):
-    if not load_saved:
-        state_path, policy = planner.plan()
-        np.savez("%s" % res_fname,
-                 state_path=state_path, policy=policy)
-
-    else:
-        try:
-            results = np.load("%s.npz" % res_fname, allow_pickle=True)
-        except:
-            print("Results: %s not found!" % res_fname)
-            return
-
-        policy = results["policy"]
-        state_path = results["state_path"]
-        if len(policy) == 0:
-            print("Empty Path! Skipping....")
-            return
-
-    # print(state_path)
-
-    if play_results:
-        bottle_pos = planner.bottle_pos_from_state(planner.start)
-        init_joints = planner.joint_pose_from_state(planner.start)
-        env.arm.reset(init_joints)
-        bottle_ori = np.array([0, 0, 0, 1])
-
-        bottle_goal = planner.bottle_pos_from_state(planner.goal)
-        env.goal_line_id = env.draw_line(
-            lineFrom=bottle_goal,
-            lineTo=bottle_goal + np.array([0, 0, 1]),
-            lineColorRGB=[0, 0, 1], lineWidth=1,
-            replaceItemUniqueId=env.goal_line_id,
-            lifeTime=0)
-
-        full_arm_traj_policy, full_arm_traj_state = policy_to_full_traj(
-            init_joints, policy, state_path, use_policy=False)
-        # i = 20
-        # full_arm_traj_policy, full_arm_traj_state = policy_to_full_traj(
-        #     state_path[i, 3:], policy[i:], state_path[i:], use_policy=False)
-        # bottle_pos = state_path[i, :3]
-        fall_count = 0
-        success_count = 0
-        for i, exec_params in enumerate(exec_params_set):
-            print("New Test with params: %s" % exec_params)
-            is_fallen, is_collision, new_bottle_pos, new_bottle_ori, new_joint_pos, executed_traj = (
-                # env.simulate_plan(joint_traj=full_arm_traj_state,
-                #                   bottle_pos=bottle_pos,
-                #                   bottle_ori=bottle_ori,
-                #                   sim_params=exec_params))
-                env.simulate_plan_online(init_joints=init_joints,
-                                         policy=policy,
-                                         bottle_pos=bottle_pos,
-                                         bottle_ori=bottle_ori,
-                                         sim_params=exec_params))
-            is_success = planner.reached_goal(new_bottle_pos)
-            print(new_bottle_pos)
-            print("Exec #%d: fell: %d, success: %d" %
-                  (i, is_fallen, is_success))
-            print()
-            success_count += is_success
-            fall_count += is_fallen
-
-            executed_traj = np.vstack(executed_traj)
-
-            fig, plots = plt.subplots(3, 4)
-            for i in range(planner.env.arm.num_joints):
-                r = i // 4 + 1
-                c = i % 4
-                plots[r][c].plot(state_path[:, i+3], label="State traj")
-                plots[r][c].plot(executed_traj[:, i+3], label="Executed traj")
-                plots[r][c].set_title("Joint %d" % i)
-
-            xyz_labels = "xyz"
-            for i in range(3):
-                r = 0
-                c = i
-                plots[r][c].plot(state_path[:, i], label="State traj")
-                plots[r][c].plot(executed_traj[:, i], label="Executed traj")
-                plots[r][c].set_title("Bottle pos %s" % xyz_labels[i])
-
-            plots[1][2].legend()
-            plt.show()
-        print("Fall Rate: %.2f, success rate: %.2f" % (
-            fall_count / float(len(exec_params_set)),
-            success_count / float(len(exec_params_set))
-        ))
-
-
 def piecewise_execution(planner: NaivePlanner, env: Environment,
                         exec_params_set,
                         load_saved=False, play_results=False,
                         res_fname="results"):
     if not load_saved:
-        state_path, policy = planner.plan()
+        state_path, policy, node_path = planner.plan()
         np.savez("%s" % res_fname,
-                 state_path=state_path, policy=policy)
+                 state_path=state_path, policy=policy, node_path=node_path)
 
     else:
         try:
@@ -164,6 +32,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
         policy = results["policy"]
         state_path = results["state_path"]
+        node_path = results["node_path"]
         if len(policy) == 0:
             print("Empty Path! Skipping....")
             return
@@ -180,36 +49,45 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
         fall_count = 0
         success_count = 0
-        for i, exec_params in enumerate(exec_params_set):
+        for exec_i, exec_params in enumerate(exec_params_set):
             print("New Test with params: %s" % exec_params)
             cur_joints = init_joints
             cur_bottle_pos = bottle_pos.copy()
             cur_bottle_ori = bottle_ori.copy()
-            print(bottle_pos, bottle_ori, flush=True)
+            # print(bottle_pos, bottle_ori, flush=True)
             is_fallen = False
             executed_traj = []
 
+            # if exec_i != 1:
+            #     continue
             for step in range(len(policy)):
+                # print(f"Step {step}, " + str(node_path[step]))
                 # print(f"step: {step}")
                 # print("state:")
                 # print(np.concatenate([cur_bottle_pos, cur_joints]))
                 # print(cur_bottle_ori)
                 # action, sim_params: EnvParams, init_joints=None, bottle_pos=None, bottle_ori=None
+                # print(node_path[step])
                 env.goal_line_id = env.draw_line(
                     lineFrom=bottle_goal,
                     lineTo=bottle_goal + np.array([0, 0, 1]),
                     lineColorRGB=[0, 0, 1], lineWidth=1,
-                    replaceItemUniqueId=env.goal_line_id,
+                    replaceItemUniqueId=None,
                     lifeTime=0)
                 step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
                     env.run_sim(policy[step], exec_params,
                                 cur_joints, cur_bottle_pos, cur_bottle_ori)
                 )
+                # if step >= 10:
+                #     state = node_path[step+1].state
+                #     cur_bottle_pos = planner.bottle_pos_from_state(state)
+                #     cur_bottle_ori = node_path[step+1].bottle_ori
+                #     cur_joints = planner.joint_pose_from_state(state)
                 env.goal_line_id = env.draw_line(
                     lineFrom=bottle_goal,
                     lineTo=bottle_goal + np.array([0, 0, 1]),
                     lineColorRGB=[0, 0, 1], lineWidth=1,
-                    replaceItemUniqueId=env.goal_line_id,
+                    replaceItemUniqueId=None,
                     lifeTime=0)
                 # env.draw_line(
                 #     lineFrom=bottle_goal,
@@ -225,7 +103,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
             is_success = planner.reached_goal(cur_bottle_pos)
             print("Exec #%d: fell: %d, success: %d" %
-                  (i, is_fallen, is_success))
+                  (exec_i, is_fallen, is_success))
             print()
             success_count += is_success
             fall_count += is_fallen
@@ -267,7 +145,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
 
 def main():
-    VISUALIZE = True
+    VISUALIZE = False
     REPLAY_RESULTS = True
     LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
@@ -341,7 +219,7 @@ def main():
     #     startb[-1] = bottle.PLANE_OFFSET
     #     start_goals[i] = (startb, goalb, start_joints)
 
-    # ignore_list = {8, }
+    # ignore_list = {8, 3, 5}
     # new_start_goals = []
     # for i in range(len(start_goals)):
     #     if i not in ignore_list:
@@ -392,20 +270,31 @@ def main():
     avg_planner = NaivePlanner(start, goal, env, xbounds,
                                ybounds, dist_thresh, eps, da_rad=da_rad,
                                dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG,
-                               num_rand_samples=num_sims_per_action)
+                               num_rand_samples=num_sims_per_action, fall_thresh=0.1)
 
-    # exec_params_set = plan_params_sets[0]
+    # exec_params_set = plan_params_sets
     single_planner.sim_params_set = plan_params_sets
-    avg_planner.sim_params_set = plan_params_sets[:10]
+    avg_planner.sim_params_set = plan_params_sets
+    for v in exec_params_set:
+        print(v)
+    # avg_fric, avg_fill = 0, 0
+    # for param in avg_planner.sim_params_set:
+    #     print(param.bottle_fric)
+    #     avg_fric += param.bottle_fric
+    #     avg_fill += param.bottle_fill
+
+    # print(avg_fric / 10.0)
+    # print(avg_fill / 10.0)
+    # exit()
 
     # pick which planner to use
-    use_single = False
-    if use_single:
-        planner = single_planner
-        planner_folder = "results"
-    else:
-        planner = avg_planner
-        planner_folder = "avg_results"
+    # use_single = False
+    # if use_single:
+    #     planner = single_planner
+    #     planner_folder = "results"
+    # else:
+    #     planner = avg_planner
+    #     planner_folder = "avg_results"
 
     # start_goal_idx = 10
     # res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
@@ -435,15 +324,21 @@ def main():
     #                     res_fname=res_fname)
 
     plan_to_time = [0, 0]
-    for pi, planner in enumerate([avg_planner, single_planner]):
-        if pi == 0:
+    for pi in range(1):
+        if pi == 1:
+            planner = single_planner
             planner_folder = "results"
         else:
+            planner = avg_planner
             planner_folder = "avg_results"
 
-        # sys.stdout = open("%s/output.txt" % planner_folder, "w")
+        if REPLAY_RESULTS:
+            sys.stdout = open("%s/results.txt" % planner_folder, "w")
+        else:
+            sys.stdout = open("%s/output.txt" % planner_folder, "w")
+        print("Planner: %s" % planner_folder)
 
-        for start_goal_idx in range(0, 12):
+        for start_goal_idx in range(12):
             print("Start goal idx: %d" % start_goal_idx)
             res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
             (startb, goalb, start_joints) = start_goals[start_goal_idx]
@@ -452,6 +347,15 @@ def main():
             goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
             planner.start = start_state
             planner.goal = goal_state
+
+            # results = np.load("%s.npz" % res_fname, allow_pickle=True)
+            # for i, a in enumerate(results["policy"]):
+            #     print('i: %d' % i)
+            #     print(np.array2string(a[0], precision=2))
+            # results = np.load("%s.npz" % res_fname, allow_pickle=True)
+            # planner.start = results["node_path"][10].state
+            # print(results["policy"][10])
+
             start_time = time.time()
             piecewise_execution(planner, env,
                                 exec_params_set=exec_params_set,

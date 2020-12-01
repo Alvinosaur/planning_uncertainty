@@ -122,7 +122,7 @@ class Bottle:
         angle = math.acos(z_axis @ new_z_axis /
                           (np.linalg.norm(z_axis) * np.linalg.norm(new_z_axis)))
         # when z-axis rotation is 90deg
-        return abs(angle) > (45 * math.pi / 180)
+        return abs(angle) > (20 * math.pi / 180)
 
 
 class Arm:

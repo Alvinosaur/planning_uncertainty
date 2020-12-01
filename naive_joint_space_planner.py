@@ -58,9 +58,12 @@ while state != start:
 
 
 class Node(object):
-    def __init__(self, cost, state, nearest_arm_pos_i, nearest_arm_pos,
+    def __init__(self, cost, state, nearest_arm_pos_i,
+                 nearest_arm_pos, fall_history=[], fall_prob=-1,
                  bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0):
         self.cost = cost
+        self.fall_prob = fall_prob
+        self.fall_history = fall_history
         self.g = g
         self.h = h
         self.state = state
@@ -72,8 +75,10 @@ class Node(object):
         return self.cost < other.cost
 
     def __repr__(self):
-        s = "C(%.2f): " % self.cost
-        s += ",".join(["%.2f" % v for v in self.state])
+        s = "C(%.2f): Bpos(" % self.cost
+        s += ",".join(["%.2f" % v for v in self.state[:3]])
+        s += "), fall history:"
+        s += ",".join(["%d" % v for v in self.fall_history])
         return s
 
 
@@ -83,7 +88,7 @@ class NaivePlanner():
     MODE = 2
 
     def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, visualize=False,
-                 sim_mode=SINGLE, num_rand_samples=1):
+                 sim_mode=SINGLE, num_rand_samples=1, fall_thresh=0.2):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -121,9 +126,10 @@ class NaivePlanner():
         # of random env params
         self.param_probs = [(p.bottle_fill_prob * p.bottle_fric_prob)
                             for p in self.sim_params_set]
+        self.param_index = 4  # np.random.choice(self.num_rand_samples)
 
         # safety threshold for prob(bottle fall) to deem invalid transitions
-        self.fall_proportion_thresh = 0.2
+        self.fall_thresh = fall_thresh
 
         # method of simulating an action
         self.sim_mode = sim_mode
@@ -157,7 +163,7 @@ class NaivePlanner():
     def avg_results(self, results):
         """
         Randomly sample internal(unobservable to agent) bottle parameters for
-        each iteration to calculate expected fall rate. 
+        each iteration to calculate expected fall rate.
         Only the first sim param (which should be same as the single planner)
          will be used to determine cost and next state.
         NOTE: this is still not stochastic because we overall are using some finalized cost and next state to represent successor of a (state, action) pair. In a true stochastic planner, successors are represented
@@ -177,6 +183,7 @@ class NaivePlanner():
         # bottle since no need to simulate different bottle parameters
         # so num_iters <= self.num_rand_samples
         num_iters = len(results)
+        fall_history = []
         for i in range(num_iters):
             is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
             bpos_disc = np.rint(bpos / self.dpos)
@@ -192,6 +199,7 @@ class NaivePlanner():
                 bpos_bins[key] = [bpos, bori, next_joint_pos, 1]
 
             # weighted sum of fall counts: sum(pi*xi) / sum(pi)
+            fall_history.append(is_fallen)
             avg_fall_prob += is_fallen * self.param_probs[i]
             fall_prob_norm += self.param_probs[i]
 
@@ -204,7 +212,7 @@ class NaivePlanner():
         # print(bpos_bins[max_key][-1])
         # print(self.state_to_str(bpos), self.state_to_str(bori))
 
-        return (fall_proportion, bpos, bori, next_joint_pos)
+        return (fall_proportion, fall_history, bpos, bori, next_joint_pos)
 
     def plan(self):
         # initialize open set with start and G values
@@ -275,7 +283,7 @@ class NaivePlanner():
                         lineFrom=goal_bpos,
                         lineTo=goal_bpos + vertical_offset,
                         lineColorRGB=[0, 0, 1], lineWidth=1,
-                        replaceItemUniqueId=self.env.goal_line_id,
+                        # replaceItemUniqueId=self.env.goal_line_id,
                         lifeTime=0)
 
                 # action defined as an offset of joint angles of arm
@@ -288,8 +296,9 @@ class NaivePlanner():
                      next_bottle_ori, next_joint_pose) = self.sim_func(
                         action=action, init_joints=cur_joints,
                         bottle_pos=bottle_pos, bottle_ori=bottle_ori,
-                        sim_params=self.sim_params_set[0])
+                        sim_params=self.sim_params_set[self.param_index])
                     invalid = is_fallen
+                    fall_history = [is_fallen]
                     fall_prob = 1 if is_fallen else 0
 
                 else:
@@ -298,10 +307,10 @@ class NaivePlanner():
                         bottle_pos=bottle_pos, bottle_ori=bottle_ori,
                         sim_params_set=self.sim_params_set)
 
-                    (fall_prob, next_bottle_pos,
+                    (fall_prob, fall_history, next_bottle_pos,
                      next_bottle_ori, next_joint_pose) = (
                          self.process_multiple_sim_results(results))
-                    invalid = fall_prob > self.fall_proportion_thresh
+                    invalid = fall_prob > self.fall_thresh
                     # print(invalid, fall_prob)
 
                 # print("Is fallen: %d, action: %s" % (invalid, action))
@@ -350,6 +359,8 @@ class NaivePlanner():
                     # add to open set
                     heapq.heappush(open_set, Node(
                         cost=overall_cost,
+                        fall_prob=fall_prob,
+                        fall_history=fall_history,
                         g=new_G, h=h,
                         state=next_state,
                         nearest_arm_pos_i=nn_joint_i,
@@ -357,7 +368,7 @@ class NaivePlanner():
                         bottle_ori=next_bottle_ori))
 
                     # build directed graph
-                    transitions[next_state_key] = (state, ai)
+                    transitions[next_state_key] = (ai, n)
                     # print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
 
         print("States Expanded: %d, found goal: %d" %
@@ -367,23 +378,28 @@ class NaivePlanner():
         # reconstruct path
         policy = []
         planned_path = []
+        node_path = []
         state = self.goal
         state_key = self.state_to_key(state)
         start_key = self.state_to_key(self.start)
         # NOTE: planned_path does not include initial starting pose!
         while state_key != start_key:
+            # state[i]  ex: goal
             planned_path.append(state)
-            state, ai = transitions[state_key]
+            # state[i-1] + action[i-1] -> node[i] containing state[i]
+            ai, n = transitions[state_key]
             policy.append(self.A.get_action(ai))
-            state_key = self.state_to_key(state)
+            state_key = self.state_to_key(n.state)
+            node_path.append(n)
 
         # need to reverse since backwards ordering
-        # (state[i-1], policy[i]) -> state[i]
+        # (node[i], policy[i]) -> state[i]
         # or in other words, ith policy led to ith state
         # so after taking action i, we should reach state i
         planned_path.reverse()
         policy.reverse()
-        return planned_path, policy
+        node_path.reverse()
+        return planned_path, policy, node_path
 
     def get_guided_bottle_pos(self, bpos, dist_offset=0.1):
         new_bpos = np.copy(bpos)
