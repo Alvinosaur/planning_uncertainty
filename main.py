@@ -145,7 +145,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
 
 def main():
-    VISUALIZE = False
+    VISUALIZE = True
     REPLAY_RESULTS = True
     LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
@@ -325,20 +325,20 @@ def main():
 
     plan_to_time = [0, 0]
     for pi in range(1):
-        if pi == 1:
+        if pi == 0:
             planner = single_planner
             planner_folder = "results"
         else:
             planner = avg_planner
             planner_folder = "avg_results"
 
-        if REPLAY_RESULTS:
-            sys.stdout = open("%s/results.txt" % planner_folder, "w")
-        else:
-            sys.stdout = open("%s/output.txt" % planner_folder, "w")
+        # if REPLAY_RESULTS:
+        #     sys.stdout = open("%s/results.txt" % planner_folder, "w")
+        # else:
+        #     sys.stdout = open("%s/output.txt" % planner_folder, "w")
         print("Planner: %s" % planner_folder)
 
-        for start_goal_idx in range(12):
+        for start_goal_idx in [6]:  # range(12):
             print("Start goal idx: %d" % start_goal_idx)
             res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
             (startb, goalb, start_joints) = start_goals[start_goal_idx]

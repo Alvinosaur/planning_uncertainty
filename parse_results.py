@@ -18,6 +18,16 @@ def parse(fname):
     return fall_probs, success_probs
 
 
+def parse_output(fname):
+    with open(fname, "r") as f:
+        text = f.read()
+        results = re.findall(
+            "States Expanded: (\d+).*", text)
+        num_states = [float(v) for v in results]
+
+    return sum(num_states) / len(num_states)
+
+
 single_fall_probs, single_success_probs = parse(single_results)
 avg_fall_probs, avg_success_probs = parse(avg_results)
 
@@ -40,3 +50,6 @@ print("(Avg Success Prob) Single: %.3f, Avg: %.3f" % (
     sum(single_success_probs) / len(single_success_probs),
     sum(avg_success_probs) / len(avg_success_probs)
 ))
+
+print(parse_output("avg_results/output.txt"))
+print(parse_output("results/output.txt"))
