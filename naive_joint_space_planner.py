@@ -87,8 +87,8 @@ class NaivePlanner():
     AVG = 1
     MODE = 2
 
-    def __init__(self, start, goal, env, xbounds, ybounds, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, visualize=False,
-                 sim_mode=SINGLE, num_rand_samples=1, fall_thresh=0.2):
+    def __init__(self, start, goal, env, xbounds, ybounds, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, visualize=False,
+                 sim_mode=SINGLE, fall_thresh=0.2):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -118,9 +118,7 @@ class NaivePlanner():
         self.visualize = visualize
 
         # random samples of environmental parameters
-        self.num_rand_samples = num_rand_samples
-        self.sim_params_set = env.gen_random_env_param_set(
-            num=self.num_rand_samples)
+        self.sim_params_set = sim_params_set
 
         # overall probability of a given simulation is product of probabilities
         # of random env params
@@ -135,16 +133,12 @@ class NaivePlanner():
         self.sim_mode = sim_mode
         if sim_mode == self.SINGLE:
             self.sim_func = self.env.run_sim
-            assert(self.num_rand_samples == 1)
         elif sim_mode == self.AVG:
             self.sim_func = self.env.run_multiple_sims
             self.process_multiple_sim_results = self.avg_results
-            # 1 is ok, can change, but to double-check that we're not using default value
-            assert(self.num_rand_samples > 1)
         else:
             print("Invalid sim mode specified: {}, defaulting to SINGLE".format(sim_mode))
             self.sim_func = self.env.run_sim
-            assert(self.num_rand_samples == 1)
 
     def debug_view_state(self, state):
         joint_pose = self.joint_pose_from_state(state)

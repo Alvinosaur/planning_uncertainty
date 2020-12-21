@@ -44,7 +44,7 @@ class Bottle:
         self.bottle_mass = None
         self.inertial_shift = None
         self.center_of_mass = None
-        self.default_com = np.array([0, 0, self.height / 2])
+        self.default_center_of_mass = np.array([0, 0, self.height / 2])
         self.set_fill_proportion(fill_prop)
 
         self.col_id = p.createCollisionShape(
@@ -55,18 +55,18 @@ class Bottle:
     def set_fill_proportion(self, fill_prop):
         self.fill_prop = np.clip(fill_prop, self.min_fill, self.max_fill)
         self.bottle_mass = self.mass_from_fill(self.fill_prop)
-        self.center_of_mass = self.com_from_fill(self.fill_prop)
-        self.inertial_shift = self.center_of_mass - self.default_com
+        self.center_of_mass = self.center_of_mass_from_fill(self.fill_prop)
+        self.inertial_shift = self.center_of_mass - self.default_center_of_mass
 
     def mass_from_fill(self, fill_prop):
         return Bottle.PLASTIC_MASS + (
             fill_prop * self.max_volume * Bottle.VOL_TO_MASS)
 
-    def com_from_fill(self, fill_prop):
+    def center_of_mass_from_fill(self, fill_prop):
         # calculate center of mass of water bottle
         water_height = self.height * fill_prop
         if fill_prop <= self.min_fill:
-            # if bottle empty, com is just center of cylinder
+            # if bottle empty, center_of_mass is just center of cylinder
             # less than half of height
             return np.array([0, 0, self.height * 0.4])
         else:
@@ -88,26 +88,19 @@ class Bottle:
         #     p.removeBody(self.bottle_id)
         if ori is None:
             ori = [0, 0, 0, 1]
-        if pos is not None:
-            x, y, z = pos
-            pos = [x, y, z]
-            self.bottle_id = p.createMultiBody(
-                baseMass=self.bottle_mass,
-                baseInertialFramePosition=self.inertial_shift,
-                baseCollisionShapeIndex=self.col_id,
-                basePosition=pos,
-                baseOrientation=ori)
-        else:
-            x, y, z = self.start_pos
-            pos = [x, y, z]
-            self.bottle_id = p.createMultiBody(
-                baseMass=self.bottle_mass,
-                baseInertialFramePosition=self.inertial_shift,
-                baseCollisionShapeIndex=self.col_id,
-                basePosition=self.start_pos,
-                baseOrientation=ori)
+
+        if pos is None:
+            pos = self.start_pos
+
         self.pos = pos
         self.ori = ori
+        self.bottle_id = p.createMultiBody(
+            baseMass=self.bottle_mass,
+            baseInertialFramePosition=self.inertial_shift,
+            baseCollisionShapeIndex=self.col_id,
+            basePosition=self.pos,
+            baseOrientation=self.ori)
+
         p.changeDynamics(
             bodyUniqueId=self.bottle_id,
             linkIndex=-1,  # no links, -1 refers to bottle base
@@ -132,7 +125,6 @@ class Arm:
         self.kukaId = kukaId
         self.base_pos = np.array([0, 0, 0.1])
         self.min_dist = 0.3
-        self.MAX_HORIZ_REACH = 0.851  # need to set with set_general_max_reach()
         self.default_joint_pose = np.array(
             [0, math.pi / 2, math.pi / 2, 0, 0, 0, 0])
 
@@ -223,23 +215,6 @@ class Arm:
             # print(joints)
 
         self.reset(self.joint_pose)
-
-    def calc_max_horiz_dist(self, contact_height):
-        hprime = abs(self.L1 - contact_height)
-        dprime = (self.rprime**2 - hprime**2)**0.5
-        max_horiz_dist = dprime + self.LE
-        return max_horiz_dist
-
-    def set_general_max_reach(self, all_contact_heights):
-        closest_h = None
-        min_dist = 0  # dist from L1 joint, which has fixed height
-        for h in all_contact_heights:
-            dist = abs(h - self.L1)
-            if dist < min_dist or closest_h is None:
-                min_dist = dist
-                closest_h = h
-
-        self.MAX_REACH = self.calc_max_horiz_dist(closest_h)
 
     def get_target_joints(self, target_EE_pos, angle):
         """Given target EE position, runs pybullet's internal inverse

@@ -54,20 +54,10 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             cur_joints = init_joints
             cur_bottle_pos = bottle_pos.copy()
             cur_bottle_ori = bottle_ori.copy()
-            # print(bottle_pos, bottle_ori, flush=True)
             is_fallen = False
             executed_traj = []
 
-            # if exec_i != 1:
-            #     continue
             for step in range(len(policy)):
-                # print(f"Step {step}, " + str(node_path[step]))
-                # print(f"step: {step}")
-                # print("state:")
-                # print(np.concatenate([cur_bottle_pos, cur_joints]))
-                # print(cur_bottle_ori)
-                # action, sim_params: EnvParams, init_joints=None, bottle_pos=None, bottle_ori=None
-                # print(node_path[step])
                 env.goal_line_id = env.draw_line(
                     lineFrom=bottle_goal,
                     lineTo=bottle_goal + np.array([0, 0, 1]),
@@ -78,25 +68,12 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
                     env.run_sim(policy[step], exec_params,
                                 cur_joints, cur_bottle_pos, cur_bottle_ori)
                 )
-                # if step >= 10:
-                #     state = node_path[step+1].state
-                #     cur_bottle_pos = planner.bottle_pos_from_state(state)
-                #     cur_bottle_ori = node_path[step+1].bottle_ori
-                #     cur_joints = planner.joint_pose_from_state(state)
                 env.goal_line_id = env.draw_line(
                     lineFrom=bottle_goal,
                     lineTo=bottle_goal + np.array([0, 0, 1]),
                     lineColorRGB=[0, 0, 1], lineWidth=1,
                     replaceItemUniqueId=None,
                     lifeTime=0)
-                # env.draw_line(
-                #     lineFrom=bottle_goal,
-                #     lineTo=bottle_goal + np.array([0, 0, 1]),
-                #     lineColorRGB=[0, 0, 1], lineWidth=1,
-                #     lifeTime=0)
-                # print("next state:")
-                # print(np.concatenate([cur_bottle_pos, cur_joints]))
-                # print(policy[step])
                 is_fallen |= step_is_fallen
                 executed_traj.append(np.concatenate(
                     [cur_bottle_pos, cur_joints]))
@@ -111,32 +88,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             executed_traj = np.vstack(executed_traj)
             difference = np.linalg.norm(
                 executed_traj[:, :3] - state_path[:, :3], axis=1)
-            # print(difference)
             indices = np.where(difference > 0)[0]
-            # print(indices)
-            # print(executed_traj[indices[0]-1:indices[0]+1, :])
-            # print(state_path[indices[0]-1:indices[0]+1, :])
-            # # ith policy led to ith state
-            # print(policy[indices[0]])
-
-            # fig, plots = plt.subplots(3, 4)
-            # for i in range(planner.env.arm.num_joints):
-            #     r = i // 4 + 1
-            #     c = i % 4
-            #     plots[r][c].plot(state_path[:, i+3], label="State traj")
-            #     plots[r][c].plot(executed_traj[:, i+3], label="Executed traj")
-            #     plots[r][c].set_title("Joint %d" % i)
-
-            # xyz_labels = "xyz"
-            # for i in range(3):
-            #     r = 0
-            #     c = i
-            #     plots[r][c].plot(state_path[:, i], label="State traj")
-            #     plots[r][c].plot(executed_traj[:, i], label="Executed traj")
-            #     plots[r][c].set_title("Bottle pos %s" % xyz_labels[i])
-
-            # plots[1][2].legend()
-            # plt.show()
 
         print("Fall Rate: %.2f, success rate: %.2f" % (
             fall_count / float(len(exec_params_set)),
@@ -150,6 +102,15 @@ def main():
     LOAD_SAVED = REPLAY_RESULTS
     LOGGING = False
     GRAVITY = -9.81
+
+    dx = dy = dz = 0.1
+    dist_thresh = dx
+    eps = 5
+    da_rad = 8 * math.pi / 180.0
+    num_sims_per_action = 20
+    num_exec_tests = 10
+    load_saved_params = True
+
     if VISUALIZE:
         p.connect(p.GUI)  # or p.DIRECT for nongraphical version
     else:
@@ -168,10 +129,6 @@ def main():
             cameraDistance=1.5, cameraYaw=145, cameraPitch=-10,
             cameraTargetPosition=[0, 0, 0])
 
-    # bottle
-    # bottle_start_pos = np.array(
-    #     [-0, -0.6, Bottle.INIT_PLANE_OFFSET]).astype(float)
-    # bottle_goal_pos = np.array([-0.6, -0.2, 0]).astype(float)
     bottle_start_pos = np.array(
         [0.5, 0.5, 0]).astype(float)
     bottle_goal_pos = np.array([0.2, 0.6, 0]).astype(float)
@@ -179,9 +136,6 @@ def main():
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
 
     # starting end-effector pos, not base pos
-    # NOTE: just temporarily setting arm to starting bottle position with some offset
-    # offset = -np.array([0.05, 0, 0])
-    # EE_start_pos = bottle_start_pos + offset
     EE_start_pos = np.array([0.5, 0.3, 0.2])
     base_start_ori = np.array([0, 0, 0, 1]).astype(float)
     arm = Arm(EE_start_pos=EE_start_pos,
@@ -197,13 +151,10 @@ def main():
         [bottle_goal_pos, [0] * arm.num_joints])
     xbounds = [-0.4, -0.9]
     ybounds = [-0.1, -0.9]
-    dx = dy = dz = 0.1
-    dist_thresh = dx
+
     # if  the below isn't true, you're expecting bottle to fall in exactly
     # the same state bin as the goal
     assert(dist_thresh <= dx)
-    eps = 5
-    da_rad = 8 * math.pi / 180.0
 
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
@@ -245,14 +196,11 @@ def main():
     # env.bottle = new_bottle
 
     # run planner and visualize result
-    num_sims_per_action = 20
     plan_params_sets = env.gen_random_env_param_set(
         num=num_sims_per_action)
-    num_exec_tests = 10
     exec_params_set = env.gen_random_env_param_set(
         num=num_exec_tests)
 
-    load_saved_params = True
     if load_saved_params:
         with open("sim_params_set.obj", "rb") as f:
             exec_plan_params = pickle.load(f)
@@ -264,17 +212,17 @@ def main():
                                     plan_params_sets=plan_params_sets)
             pickle.dump(exec_plan_params, f)
 
-    single_planner = NaivePlanner(start, goal, env, xbounds,
-                                  ybounds, dist_thresh, eps, da_rad=da_rad,
-                                  dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.SINGLE)
-    avg_planner = NaivePlanner(start, goal, env, xbounds,
-                               ybounds, dist_thresh, eps, da_rad=da_rad,
-                               dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG,
-                               num_rand_samples=num_sims_per_action, fall_thresh=0.1)
+    single_planner = NaivePlanner(start, goal, env, xbounds, ybounds,
+                                  sim_params_set=plan_params_sets,
+                                  dist_thresh=dist_thresh, eps=eps, da_rad=da_rad,
+                                  dx=dx, dy=dy, dz=dz, visualize=VISUALIZE,
+                                  sim_mode=NaivePlanner.SINGLE)
+    avg_planner = NaivePlanner(start, goal, env, xbounds, ybounds,
+                               sim_params_set=plan_params_sets,
+                               dist_thresh=dist_thresh, eps=eps, da_rad=da_rad,
+                               dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG, fall_thresh=0.1)
 
     # exec_params_set = plan_params_sets
-    single_planner.sim_params_set = plan_params_sets
-    avg_planner.sim_params_set = plan_params_sets
     for v in exec_params_set:
         print(v)
     # avg_fric, avg_fill = 0, 0
@@ -372,5 +320,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    # test_quaternion_discretization()
-    # test_state_indexing()
