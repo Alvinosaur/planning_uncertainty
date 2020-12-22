@@ -4,7 +4,8 @@ import matplotlib.pyplot as plt
 
 
 single_results = "results/results.txt"
-avg_results = "avg_results/results.txt"
+avg_results_dir = "avg_results_0.10_sample_2"
+avg_results = f"{avg_results_dir}/results.txt"
 
 
 def parse(fname):
@@ -14,8 +15,9 @@ def parse(fname):
             "Fall Rate: (\d+.\d+), success rate: (\d+.\d+)", text)
         fall_probs = [float(v[0]) for v in results]
         success_probs = [float(v[1]) for v in results]
+        num_failed_plans = len(re.findall("not found!", text))
 
-    return fall_probs, success_probs
+    return fall_probs, success_probs, num_failed_plans
 
 
 def parse_output(fname):
@@ -28,8 +30,8 @@ def parse_output(fname):
     return sum(num_states) / len(num_states)
 
 
-single_fall_probs, single_success_probs = parse(single_results)
-avg_fall_probs, avg_success_probs = parse(avg_results)
+single_fall_probs, single_success_probs, single_num_failed_plans = parse(single_results)
+avg_fall_probs, avg_success_probs, avg_num_failed_plans = parse(avg_results)
 
 print("Fall Probs:")
 print("single:")
@@ -51,5 +53,7 @@ print("(Avg Success Prob) Single: %.3f, Avg: %.3f" % (
     sum(avg_success_probs) / len(avg_success_probs)
 ))
 
-print(parse_output("avg_results/output.txt"))
-print(parse_output("results/output.txt"))
+avg_num_states = parse_output(f"{avg_results_dir}/output.txt")
+num_states = parse_output("results/output.txt")
+print(f"Avg num states: {avg_num_states}, avg num timeouts: {avg_num_failed_plans}")
+print(f"Num states: {num_states}, num timeouts: {single_num_failed_plans}")

@@ -3,9 +3,8 @@ import pybullet_data
 import math
 import numpy as np
 import pickle
-import matplotlib.pyplot as plt
-import re
 import time
+import os
 import sys
 
 from sim_objects import Bottle, Arm
@@ -96,6 +95,77 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
         ))
 
 
+def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment, exec_params, res_fname, max_time):
+    reached_goal = False
+    is_fallen = False
+    plan_count = 0
+    final_state_path = []
+    final_policy = []
+    final_node_path = []
+    goal = planner.goal
+
+    if max_time == -1:
+        max_time = sys.maxsize
+
+    try:
+        with helpers.time_limit(max_time):
+            while not reached_goal and not is_fallen:
+                # plan from current position
+                plan_count += 1
+                state_path, policy, node_path = planner.plan()
+                final_state_path += state_path
+                final_policy += policy
+                final_node_path += node_path
+
+                bottle_pos = planner.bottle_pos_from_state(planner.start)
+                init_joints = planner.joint_pose_from_state(planner.start)
+                env.arm.reset(init_joints)
+                bottle_ori = np.array([0, 0, 0, 1])
+                cur_joints = init_joints
+                cur_bottle_pos = bottle_pos.copy()
+                cur_bottle_ori = bottle_ori.copy()
+
+                # execute found plan, terminate if bottle fell, replan if failed to reach goal
+                for step in range(len(policy)):
+                    step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
+                        env.run_sim(policy[step], exec_params,
+                                    cur_joints, cur_bottle_pos, cur_bottle_ori)
+                    )
+                    is_fallen |= step_is_fallen
+
+                    if is_fallen:
+                        break
+
+                # check at end of execution if reached goal
+                if not is_fallen:
+                    reached_goal = planner.reached_goal(cur_bottle_pos)
+
+    except helpers.TimeoutException:
+        pass
+
+    # save whatever plan was found, if any
+    np.savez("%s" % res_fname,
+             state_path=final_state_path, policy=final_policy, node_path=final_node_path)
+
+    return reached_goal, is_fallen, plan_count
+
+
+def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
+                               exec_params_set,
+                               res_fname,
+                               max_time):
+    orig_start = planner.start
+    orig_goal = planner.goal
+
+    for exec_i, exec_params in enumerate(exec_params_set):
+        planner.start = orig_start
+        planner.goal = orig_goal
+        piecewise_execution_replan_helper(planner, env,
+                                          exec_params=exec_params,
+                                          res_fname=res_fname + "_exec_%d" % exec_i,
+                                          max_time=max_time)
+
+
 def main():
     VISUALIZE = True
     REPLAY_RESULTS = True
@@ -103,13 +173,30 @@ def main():
     LOGGING = False
     GRAVITY = -9.81
 
+    max_time_s = 5 * 60  # -1 for no time limit
+    fall_thresh = 0.1
     dx = dy = dz = 0.1
     dist_thresh = dx
     eps = 5
     da_rad = 8 * math.pi / 180.0
-    num_sims_per_action = 20
+    num_sims_per_action = 10
     num_exec_tests = 10
     load_saved_params = True
+
+    pi = 1
+    sample_strat = "_sample_2"  # sample_1 is bimodal, sample_2 is unimodal centered at high values
+    # sample_strat = ""
+    if pi == 0:
+        planner_folder = "results"
+    else:
+        planner_folder = "avg_results_%.2f%s" % (fall_thresh, sample_strat)
+    if not os.path.exists(planner_folder):
+        os.mkdir(planner_folder)
+
+    # if REPLAY_RESULTS:
+    #     sys.stdout = open("%s/results.txt" % planner_folder, "w")
+    # else:
+    #     sys.stdout = open("%s/output.txt" % planner_folder, "w")
 
     if VISUALIZE:
         p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -144,6 +231,15 @@ def main():
     start_joints = arm.joint_pose
 
     env = Environment(arm, bottle, is_viz=VISUALIZE)
+    # Normal distribution of internal bottle params
+    # normal distrib for bottle friction
+    env.min_fric = 0.15
+    env.max_fric = 0.2
+    # normal distrib for bottle fill proportion
+    env.min_fill = env.bottle.min_fill
+    env.max_fill = 1.0
+    env.set_distribs()
+    
     start = np.concatenate(
         [bottle_start_pos, start_joints])
     # goal joints are arbitrary and populated later in planner
@@ -154,7 +250,7 @@ def main():
 
     # if  the below isn't true, you're expecting bottle to fall in exactly
     # the same state bin as the goal
-    assert(dist_thresh <= dx)
+    assert (dist_thresh <= dx)
 
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
@@ -195,34 +291,49 @@ def main():
     #                     fric=fric)
     # env.bottle = new_bottle
 
-    # run planner and visualize result
-    plan_params_sets = env.gen_random_env_param_set(
-        num=num_sims_per_action)
-    exec_params_set = env.gen_random_env_param_set(
-        num=num_exec_tests)
+    with open("sim_params_set.obj", "rb") as f:
+        exec_plan_params = pickle.load(f)
+        exec_params_set = exec_plan_params["exec_params_set"]
+        plan_params_sets = exec_plan_params["plan_params_sets"]
 
-    if load_saved_params:
-        with open("sim_params_set.obj", "rb") as f:
-            exec_plan_params = pickle.load(f)
-            exec_params_set = exec_plan_params["exec_params_set"]
-            plan_params_sets = exec_plan_params["plan_params_sets"]
-    else:
-        with open("sim_params_set.obj", "wb") as f:
-            exec_plan_params = dict(exec_params_set=exec_params_set,
-                                    plan_params_sets=plan_params_sets)
-            pickle.dump(exec_plan_params, f)
+    # generate new planning env parameters, not exec
+    if not load_saved_params:
+        env.min_fric = 0.15
+        env.max_fric = 0.2
+        env.set_distribs()
+        plan_params_sets = env.gen_random_env_param_set(
+            num=int(num_sims_per_action))
+
+        # env.min_fric = 0.05
+        # env.max_fric = 0.1
+        # env.set_distribs()
+        # plan_params_sets += env.gen_random_env_param_set(
+        #     num=int(num_sims_per_action//2))
+
 
     single_planner = NaivePlanner(start, goal, env, xbounds, ybounds,
                                   sim_params_set=plan_params_sets,
                                   dist_thresh=dist_thresh, eps=eps, da_rad=da_rad,
                                   dx=dx, dy=dy, dz=dz, visualize=VISUALIZE,
-                                  sim_mode=NaivePlanner.SINGLE)
+                                  sim_mode=NaivePlanner.SINGLE, fall_thresh=fall_thresh)
+    single_planner.sim_params_set[single_planner.param_index] = EnvParams(0.70, 0.08, 0.33, 0.11)
+
     avg_planner = NaivePlanner(start, goal, env, xbounds, ybounds,
                                sim_params_set=plan_params_sets,
                                dist_thresh=dist_thresh, eps=eps, da_rad=da_rad,
-                               dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG, fall_thresh=0.1)
+                               dx=dx, dy=dy, dz=dz, visualize=VISUALIZE, sim_mode=NaivePlanner.AVG,
+                               fall_thresh=fall_thresh)
+
+    planner = single_planner if pi == 0 else avg_planner
+
+    with open("%s/sim_params_set.obj" % planner_folder, "wb") as f:
+        exec_plan_params = dict(exec_params_set=exec_params_set,
+                                plan_params_sets=plan_params_sets)
+        pickle.dump(exec_plan_params, f)
 
     # exec_params_set = plan_params_sets
+    exec_params_set = exec_params_set[-1:]
+    print("exec_params_set:")
     for v in exec_params_set:
         print(v)
     # avg_fric, avg_fill = 0, 0
@@ -272,48 +383,44 @@ def main():
     #                     res_fname=res_fname)
 
     plan_to_time = [0, 0]
-    for pi in range(1):
-        if pi == 0:
-            planner = single_planner
-            planner_folder = "results"
-        else:
-            planner = avg_planner
-            planner_folder = "avg_results"
+    # for pi in range(1):
+    print("Planner: %s" % planner_folder)
 
-        # if REPLAY_RESULTS:
-        #     sys.stdout = open("%s/results.txt" % planner_folder, "w")
-        # else:
-        #     sys.stdout = open("%s/output.txt" % planner_folder, "w")
-        print("Planner: %s" % planner_folder)
+    # targets = list(range(5, 12))
+    targets = list(range(0, 12))
+    for start_goal_idx in targets:
+        print("Start goal idx: %d" % start_goal_idx)
+        res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
+        (startb, goalb, start_joints) = start_goals[start_goal_idx]
+        start_state = helpers.bottle_EE_to_state(
+            bpos=startb, arm=arm, joints=start_joints)
+        goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
+        planner.start = start_state
+        planner.goal = goal_state
 
-        for start_goal_idx in [6]:  # range(12):
-            print("Start goal idx: %d" % start_goal_idx)
-            res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
-            (startb, goalb, start_joints) = start_goals[start_goal_idx]
-            start_state = helpers.bottle_EE_to_state(
-                bpos=startb, arm=arm, joints=start_joints)
-            goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
-            planner.start = start_state
-            planner.goal = goal_state
+        # results = np.load("%s.npz" % res_fname, allow_pickle=True)
+        # for i, a in enumerate(results["policy"]):
+        #     print('i: %d' % i)
+        #     print(np.array2string(a[0], precision=2))
+        # results = np.load("%s.npz" % res_fname, allow_pickle=True)
+        # planner.start = results["node_path"][10].state
+        # print(results["policy"][10])
 
-            # results = np.load("%s.npz" % res_fname, allow_pickle=True)
-            # for i, a in enumerate(results["policy"]):
-            #     print('i: %d' % i)
-            #     print(np.array2string(a[0], precision=2))
-            # results = np.load("%s.npz" % res_fname, allow_pickle=True)
-            # planner.start = results["node_path"][10].state
-            # print(results["policy"][10])
+        start_time = time.time()
+        try:
+            with helpers.time_limit(20*60):
+                piecewise_execution(planner, env,
+                                    exec_params_set=exec_params_set,
+                                    load_saved=LOAD_SAVED,
+                                    play_results=REPLAY_RESULTS,
+                                    res_fname=res_fname)
+        except helpers.TimeoutException:
+            pass
+        # max_time=max_time_s)
 
-            start_time = time.time()
-            piecewise_execution(planner, env,
-                                exec_params_set=exec_params_set,
-                                load_saved=LOAD_SAVED,
-                                play_results=REPLAY_RESULTS,
-                                res_fname=res_fname)
-
-            time_taken = time.time() - start_time
-            plan_to_time[pi] += time_taken
-            print("time taken: %.3f" % time_taken, flush=True)
+        time_taken = time.time() - start_time
+        plan_to_time[pi] += time_taken
+        print("time taken: %.3f" % time_taken, flush=True)
 
     print("Average time: ", plan_to_time)
 

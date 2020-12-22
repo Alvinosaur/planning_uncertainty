@@ -102,10 +102,7 @@ class Environment(object):
         self.FALL_COST = Environment.INF
         self.dist_cost_scale = 100
 
-        # Normal distribution of internal bottle params
-        # normal distrib for bottle friction
-        self.min_fric = 0.05
-        self.max_fric = 0.2
+    def set_distribs(self):
         self.mean_friction = (self.min_fric + self.max_fric) / 2.
         # want min and max to be at 2 std deviations
         self.std_friction = (self.max_fric - self.mean_friction) / 2.
@@ -115,13 +112,13 @@ class Environment(object):
         self.fric_distrib = scipy.stats.norm(
             self.mean_friction, self.std_friction)
 
-        # normal distrib for bottle fill proportion
-        self.min_fill = self.bottle.min_fill
-        self.max_fill = 1.0
         self.mean_fillp = (self.min_fill + self.max_fill) / 2.
         self.std_fillp = (self.max_fill - self.mean_fillp) / 3.
         self.fillp_distrib = scipy.stats.norm(
             self.mean_fillp, self.std_fillp)
+
+        print("Mean Fill: %.3f, Std: %.3f" % (self.mean_fillp, self.std_fillp))
+        print("Mean Fric: %.3f, Std: %.3f" % (self.mean_friction, self.std_friction))
 
     def eval_cost(self, is_fallen, bottle_pos, ee_move_dist):
         # dist = np.linalg.norm(self.target_bottle_pos[:2] - bottle_pos[:2])

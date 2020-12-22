@@ -1,3 +1,13 @@
+fill, fric, pfill, pfric: 0.83, 0.15, 0.06, 0.10
+fill, fric, pfill, pfric: 0.63, 0.06, 0.43, 0.05
+fill, fric, pfill, pfric: 0.57, 0.07, 0.26, 0.10
+fill, fric, pfill, pfric: 0.54, 0.10, 0.17, 0.34
+fill, fric, pfill, pfric: 0.72, 0.16, 0.27, 0.04
+fill, fric, pfill, pfric: 0.73, 0.10, 0.25, 0.35
+fill, fric, pfill, pfric: 0.61, 0.11, 0.37, 0.48
+fill, fric, pfill, pfric: 0.77, 0.06, 0.15, 0.05
+fill, fric, pfill, pfric: 0.63, 0.09, 0.43, 0.25
+fill, fric, pfill, pfric: 0.62, 0.17, 0.39, 0.02
 Planner: results
 Start goal idx: 0
 C(0.00): Bpos(0.13,0.68,0.10), fall history:
@@ -22,7 +32,9 @@ C(2.46): Bpos(0.28,0.63,0.10), fall history:0
 C(2.46): Bpos(0.28,0.63,0.10), fall history:0
 C(2.42): Bpos(0.37,0.57,0.10), fall history:0
 States Expanded: 21, found goal: 1
-time taken: 11.231
+/home/alvin/.local/lib/python3.6/site-packages/numpy/core/_asarray.py:136: VisibleDeprecationWarning: Creating an ndarray from ragged nested sequences (which is a list-or-tuple of lists-or-tuples-or ndarrays with different lengths or shapes) is deprecated. If you meant to do this, you must specify 'dtype=object' when creating the ndarray
+  return array(a, dtype, copy=False, order=order, subok=True)
+time taken: 10.974
 Start goal idx: 1
 C(0.00): Bpos(0.17,0.59,0.10), fall history:
 C(3.03): Bpos(0.17,0.59,0.10), fall history:0
@@ -32,7 +44,7 @@ C(2.04): Bpos(0.25,0.56,0.10), fall history:0
 C(1.77): Bpos(0.34,0.50,0.10), fall history:0
 C(1.47): Bpos(0.35,0.49,0.10), fall history:0
 States Expanded: 7, found goal: 1
-time taken: 3.764
+time taken: 3.892
 Start goal idx: 2
 C(0.00): Bpos(0.40,0.56,0.10), fall history:
 C(3.23): Bpos(0.43,0.55,0.10), fall history:0
@@ -45,7 +57,7 @@ C(1.59): Bpos(0.52,0.37,0.10), fall history:0
 C(1.56): Bpos(0.49,0.33,0.10), fall history:0
 C(1.12): Bpos(0.47,0.27,0.10), fall history:0
 States Expanded: 10, found goal: 1
-time taken: 5.503
+time taken: 5.722
 Start goal idx: 3
 C(0.00): Bpos(0.30,0.64,0.10), fall history:
 C(4.09): Bpos(0.30,0.64,0.10), fall history:0
@@ -55,7 +67,7 @@ C(2.91): Bpos(0.30,0.64,0.10), fall history:0
 C(2.52): Bpos(0.30,0.64,0.10), fall history:0
 C(1.85): Bpos(0.27,0.56,0.10), fall history:0
 States Expanded: 7, found goal: 1
-time taken: 3.385
+time taken: 3.726
 Start goal idx: 4
 C(0.00): Bpos(0.17,0.59,0.10), fall history:
 C(7.92): Bpos(0.17,0.59,0.10), fall history:0
@@ -110,7 +122,7 @@ C(2.51): Bpos(0.43,0.46,0.10), fall history:0
 C(2.51): Bpos(0.43,0.46,0.10), fall history:0
 C(2.49): Bpos(0.44,0.45,0.10), fall history:0
 States Expanded: 52, found goal: 1
-time taken: 24.866
+time taken: 26.950
 Start goal idx: 5
 C(0.00): Bpos(0.50,0.29,0.10), fall history:
 C(3.77): Bpos(0.50,0.29,0.10), fall history:0
@@ -167,7 +179,7 @@ C(1.88): Bpos(0.46,0.41,0.10), fall history:0
 C(1.88): Bpos(0.46,0.41,0.10), fall history:0
 C(1.86): Bpos(0.41,0.49,0.10), fall history:0
 States Expanded: 54, found goal: 1
-time taken: 28.188
+time taken: 29.922
 Start goal idx: 6
 C(0.00): Bpos(0.30,0.51,0.10), fall history:
 C(6.20): Bpos(0.30,0.51,0.10), fall history:0
@@ -196,7 +208,7 @@ C(2.34): Bpos(0.42,0.25,0.10), fall history:0
 C(2.34): Bpos(0.42,0.25,0.10), fall history:0
 C(2.30): Bpos(0.41,0.23,0.10), fall history:0
 States Expanded: 26, found goal: 1
-time taken: 13.403
+time taken: 14.053
 Start goal idx: 7
 C(0.00): Bpos(0.29,0.70,0.10), fall history:
 C(7.38): Bpos(0.29,0.70,0.10), fall history:0
@@ -261,7 +273,7 @@ C(2.70): Bpos(0.21,0.55,0.10), fall history:0
 C(2.51): Bpos(0.22,0.49,0.10), fall history:0
 C(2.48): Bpos(0.22,0.42,0.10), fall history:0
 States Expanded: 62, found goal: 1
-time taken: 29.188
+time taken: 30.617
 Start goal idx: 8
 C(0.00): Bpos(0.55,0.45,0.10), fall history:
 C(10.11): Bpos(0.55,0.45,0.10), fall history:0
@@ -291,7 +303,7 @@ C(3.25): Bpos(0.34,0.09,0.10), fall history:0
 C(3.04): Bpos(0.32,0.05,0.10), fall history:0
 C(3.04): Bpos(0.30,0.03,0.10), fall history:0
 States Expanded: 27, found goal: 1
-time taken: 13.588
+time taken: 13.652
 Start goal idx: 9
 C(0.00): Bpos(0.27,0.50,0.10), fall history:
 C(7.05): Bpos(0.27,0.50,0.10), fall history:0
@@ -307,7 +319,7 @@ C(3.59): Bpos(0.27,0.50,0.10), fall history:0
 C(3.23): Bpos(0.27,0.50,0.10), fall history:0
 C(2.35): Bpos(0.22,0.31,0.10), fall history:0
 States Expanded: 13, found goal: 1
-time taken: 6.427
+time taken: 6.894
 Start goal idx: 10
 C(0.00): Bpos(0.20,0.57,0.10), fall history:
 C(7.20): Bpos(0.20,0.57,0.10), fall history:0
@@ -346,7 +358,7 @@ C(2.55): Bpos(0.10,0.34,0.10), fall history:0
 C(2.55): Bpos(0.10,0.34,0.10), fall history:0
 C(2.48): Bpos(0.10,0.29,0.10), fall history:0
 States Expanded: 36, found goal: 1
-time taken: 18.615
+time taken: 19.276
 Start goal idx: 11
 C(0.00): Bpos(0.42,0.50,0.10), fall history:
 C(3.86): Bpos(0.42,0.50,0.10), fall history:0
@@ -360,5 +372,5 @@ C(2.31): Bpos(0.20,0.61,0.10), fall history:0
 C(2.27): Bpos(0.16,0.61,0.10), fall history:0
 C(2.22): Bpos(0.12,0.60,0.10), fall history:0
 States Expanded: 11, found goal: 1
-time taken: 5.536
-Average time:  [163.69485068321228, 0]
+time taken: 5.455
+Average time:  [171.1335413455963, 0]
