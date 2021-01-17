@@ -31,6 +31,4 @@ offset = -np.array([0.05, 0, 0])
 bottle_start_pos = np.array([0.5, 0.4, 0.1]).astype(float)
 EE_start_pos = bottle_start_pos + offset
 base_start_ori = np.array([0, 0, 0, 1]).astype(float)
-arm = Arm(EE_start_pos=EE_start_pos,
-          start_ori=base_start_ori,
-          kukaId=kukaId)
+arm = Arm(kuka_id=kukaId, ee_start_pos=EE_start_pos, start_ori=base_start_ori)

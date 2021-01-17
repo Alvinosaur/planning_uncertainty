@@ -56,6 +56,9 @@ while state != start:
     state = prev
 """
 
+SINGLE = "single"
+AVG = "avg"
+
 
 class Node(object):
     def __init__(self, cost, state, nearest_arm_pos_i,
@@ -82,19 +85,14 @@ class Node(object):
         return s
 
 
-class NaivePlanner():
-    SINGLE = 0
-    AVG = 1
-    MODE = 2
-
-    def __init__(self, start, goal, env, xbounds, ybounds, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1, da_rad=15 * math.pi / 180.0, visualize=False,
-                 sim_mode=SINGLE, fall_thresh=0.2):
+class NaivePlanner(object):
+    def __init__(self, env, sim_mode, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
+                 da_rad=15 * math.pi / 180.0, visualize=False, start=None, goal=None,
+                 fall_thresh=0.2):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
         self.env = env
-        self.xbounds = np.array(xbounds)  # [minx, maxx]
-        self.ybounds = np.array(ybounds)  # [miny, maxy]
         self.sq_dist_thresh = dist_thresh ** 2
         self.eps = eps
         self.dx, self.dy, self.dz = dx, dy, dz
@@ -109,12 +107,6 @@ class NaivePlanner():
         self.use_EE = False
         self.guided_direction = True
 
-        # discretize continuous state/action space
-        self.xi_bounds = (
-            (self.xbounds - self.xbounds[0]) / self.dx).astype(int)
-        self.yi_bounds = (
-            (self.ybounds - self.ybounds[0]) / self.dy).astype(int)
-
         self.visualize = visualize
 
         # random samples of environmental parameters
@@ -124,16 +116,15 @@ class NaivePlanner():
         # of random env params
         self.param_probs = [(p.bottle_fill_prob * p.bottle_fric_prob)
                             for p in self.sim_params_set]
-        self.param_index = 4  # np.random.choice(self.num_rand_samples)
 
         # safety threshold for prob(bottle fall) to deem invalid transitions
         self.fall_thresh = fall_thresh
 
         # method of simulating an action
         self.sim_mode = sim_mode
-        if sim_mode == self.SINGLE:
+        if sim_mode == SINGLE:
             self.sim_func = self.env.run_sim
-        elif sim_mode == self.AVG:
+        elif sim_mode == AVG:
             self.sim_func = self.env.run_multiple_sims
             self.process_multiple_sim_results = self.avg_results
         else:
@@ -148,11 +139,6 @@ class NaivePlanner():
         eex, eey = link_states[-1][4][:2]
         dist = ((bx - eex) ** 2 + (by - eey) ** 2) ** 0.5
         print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
-
-    def change_param_set(self, new_param_set):
-        self.sim_params_set = copy.deepcopy(new_param_set)
-        self.param_probs = [(p.bottle_fill_prob * p.bottle_fric_prob)
-                            for p in self.sim_params_set]
 
     def avg_results(self, results):
         """
@@ -282,15 +268,16 @@ class NaivePlanner():
 
                 # action defined as an offset of joint angles of arm
                 action = self.A.get_action(ai)
+                # print(np.array2string(action[0], precision=2))
 
                 # (state, action) -> (cost, next_state)
-                if self.sim_mode == self.SINGLE:
+                if self.sim_mode == SINGLE:
                     # only use one simulation parameter set
                     (is_fallen, _, next_bottle_pos,
                      next_bottle_ori, next_joint_pose) = self.sim_func(
                         action=action, init_joints=cur_joints,
                         bottle_pos=bottle_pos, bottle_ori=bottle_ori,
-                        sim_params=self.sim_params_set[self.param_index])
+                        sim_params=self.sim_params_set[0])
                     invalid = is_fallen
                     fall_history = [is_fallen]
                     fall_prob = 1 if is_fallen else 0
@@ -467,10 +454,6 @@ class NaivePlanner():
         pos = np.array(pos_i) * self.dpos
         joints = (joints_i * self.da) + self.env.arm.ul
         return np.concatenate([pos, joints])
-        # out_of_bounds = not (self.xi_bounds[0] <= xi <= self.xi_bounds[1] and
-        #                      self.yi_bounds[0] <= yi <= self.yi_bounds[1])
-        # if out_of_bounds:
-        #     return None
 
     @ staticmethod
     def is_invalid_transition(trans_cost):

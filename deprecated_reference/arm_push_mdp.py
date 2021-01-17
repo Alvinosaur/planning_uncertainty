@@ -312,7 +312,7 @@ def main():
     if VISUALIZE: p.connect(p.GUI)  # or p.DIRECT for nongraphical version
     else: p.connect(p.DIRECT)
     p.setAdditionalSearchPath(pybullet_data.getDataPath())
-    p.setGravity(0,0,GRAVITY)
+    p.setGravity(0, 0, GRAVITY)
     planeId = p.loadURDF(Environment.plane_urdf_filepath)
     kukaId = p.loadURDF(Environment.arm_filepath, basePosition=[0, 0, 0])
     if LOGGING and VISUALIZE:
@@ -321,18 +321,18 @@ def main():
     # starting end-effector pos, not base pos
     EE_start_pos = np.array([0.2, 0.2, 0.3]).astype(float)
     base_start_ori = np.array([0, 0, 0, 1]).astype(float)
-    arm = Arm(EE_start_pos=EE_start_pos, start_ori=base_start_ori, 
-        kukaId=kukaId)
+    arm = Arm(ee_start_pos=EE_start_pos, start_ori=base_start_ori,
+              kuka_id=kukaId)
 
     # bottle
     bottle_start_pos = np.array([0.7, 0.6, 0.1]).astype(float)
     bottle_start_ori = np.array([0, 0, 0, 1]).astype(float)
     bottle = Bottle(start_pos=bottle_start_pos, start_ori=bottle_start_ori)
-    
+
     N = 700
     cost_based = False
-    env = Environment(arm, bottle, is_viz=VISUALIZE, N=N, 
-        run_full_mdp=RUN_FULL_MDP, cost_based=cost_based)
+    env = Environment(arm, bottle, is_viz=VISUALIZE, N=N,
+                      run_full_mdp=RUN_FULL_MDP, cost_based=cost_based)
 
     solver = MDP(env, RUN_FULL_MDP, DEBUG=True, target_type="const", 
         cost_based=cost_based)

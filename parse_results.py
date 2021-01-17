@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 
 single_results = "results/results.txt"
-avg_results_dir = "avg_results_0.10_sample_2"
+avg_results_dir = "avg_results_0.30"
 avg_results = f"{avg_results_dir}/results.txt"
 
 
@@ -17,7 +17,7 @@ def parse(fname):
         success_probs = [float(v[1]) for v in results]
         num_failed_plans = len(re.findall("not found!", text))
 
-    return fall_probs, success_probs, num_failed_plans
+    return fall_probs, success_probs
 
 
 def parse_output(fname):
@@ -27,11 +27,19 @@ def parse_output(fname):
             "States Expanded: (\d+).*", text)
         num_states = [float(v) for v in results]
 
-    return sum(num_states) / len(num_states)
+        times = re.findall("time taken: (\d+.\d+)", text)
+        times = [float(v) for v in times]
+
+        timeouts = re.findall("time taken: NA", text)
+
+        total_attempts = len(times) + len(timeouts)
+        timeout_rate = len(timeouts) / float(total_attempts)
+
+    return sum(num_states) / len(num_states), sum(times) / len(times), timeout_rate
 
 
-single_fall_probs, single_success_probs, single_num_failed_plans = parse(single_results)
-avg_fall_probs, avg_success_probs, avg_num_failed_plans = parse(avg_results)
+single_fall_probs, single_success_probs = parse(single_results)
+avg_fall_probs, avg_success_probs = parse(avg_results)
 
 print("Fall Probs:")
 print("single:")
@@ -53,7 +61,7 @@ print("(Avg Success Prob) Single: %.3f, Avg: %.3f" % (
     sum(avg_success_probs) / len(avg_success_probs)
 ))
 
-avg_num_states = parse_output(f"{avg_results_dir}/output.txt")
-num_states = parse_output("results/output.txt")
-print(f"Avg num states: {avg_num_states}, avg num timeouts: {avg_num_failed_plans}")
-print(f"Num states: {num_states}, num timeouts: {single_num_failed_plans}")
+avg_num_states, avg_times, avg_timeout_rate = parse_output(f"{avg_results_dir}/output.txt")
+num_states, times, timeout_rate = parse_output("results/output.txt")
+print(f"Avg num states: {avg_num_states}, plan time: {avg_times}, avg timeout rate: {avg_timeout_rate}")
+print(f"Num states: {num_states}, plan time: {times}, timeout rate: {timeout_rate}")

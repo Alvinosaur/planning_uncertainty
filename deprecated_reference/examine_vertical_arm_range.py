@@ -31,8 +31,7 @@ def main():
     # starting end-effector pos, not base pos
     EE_start_pos = np.array([0.2, 0.2, 0.3]).astype(float)
     base_start_ori = np.array([0, 0, 0, 1]).astype(float)
-    arm = Arm(EE_start_pos=EE_start_pos, start_ori=base_start_ori, 
-        kukaId=kukaId)
+    arm = Arm(kuka_id=kukaId, ee_start_pos=EE_start_pos, start_ori=base_start_ori)
 
     # bottle
     bottle_start_pos = np.array([0.7, 0.6, 0.1]).astype(float)

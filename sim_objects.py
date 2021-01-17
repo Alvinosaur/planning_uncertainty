@@ -4,7 +4,7 @@ import pybullet as p
 from scipy.spatial.transform import Rotation as R
 
 PI = math.pi
-TWO_PI = 2 * math.pi
+TWO_PI = 2 * PI
 
 # water bottle
 
@@ -14,13 +14,12 @@ class Bottle:
     VOL_TO_MASS = 0.0296   # fl-oz to kg
     PLASTIC_MASS = 0.0127  # kg
     PLANE_OFFSET = 0.095
-    # PLANE_OFFSET = 0
     DEFAULT_RAD = 0.03175    # m
     DEFAULT_HEIGHT = 0.1905  # m
     DEFAULT_FRIC = 0.1  # plastic-wood dynamic friction
     DEFAULT_FILL = 0.5
 
-    def __init__(self, start_pos, start_ori,
+    def __init__(self, start_pos=(0, 0, 0), start_ori=(0, 0, 0, 1),
                  fill_prop=DEFAULT_FILL,
                  fric=DEFAULT_FRIC,
                  radius=DEFAULT_RAD,
@@ -32,11 +31,12 @@ class Bottle:
         self.col_id = None
         self.bottle_id = None
 
-        self.max_volume = 16.9      # fl-oz
-        self.radius = radius    # m
-        self.height = height     # m
-        self.mass = 0.5  # kg
+        self.max_volume = 16.9  # fl-oz
+        self.radius = radius  # m
+        self.height = height  # m
         self.lat_fric = fric
+        self.min_fric = 0.05
+        self.max_fric = 0.2
         self.min_fill = 0.3
         self.max_fill = 1.0
 
@@ -52,6 +52,11 @@ class Bottle:
             radius=self.radius,
             height=self.height)
 
+    def set_fric(self, fric):
+        assert self.min_fric <= fric <= self.max_fric, \
+            f"{self.min_fric} <= {fric} <= {self.max_fric}"
+        self.lat_fric = fric
+
     def set_fill_proportion(self, fill_prop):
         self.fill_prop = np.clip(fill_prop, self.min_fill, self.max_fill)
         self.bottle_mass = self.mass_from_fill(self.fill_prop)
@@ -60,7 +65,7 @@ class Bottle:
 
     def mass_from_fill(self, fill_prop):
         return Bottle.PLASTIC_MASS + (
-            fill_prop * self.max_volume * Bottle.VOL_TO_MASS)
+                fill_prop * self.max_volume * Bottle.VOL_TO_MASS)
 
     def center_of_mass_from_fill(self, fill_prop):
         # calculate center of mass of water bottle
@@ -119,10 +124,10 @@ class Bottle:
 
 
 class Arm:
-    def __init__(self, EE_start_pos, start_ori, kukaId):
-        self.EE_start_pos = EE_start_pos
+    def __init__(self, kuka_id, ee_start_pos=(0.5, 0.3, 0.2), start_ori=(0, 0, 0, 1)):
+        self.ee_start_pos = ee_start_pos
         self.start_ori = start_ori
-        self.kukaId = kukaId
+        self.kukaId = kuka_id
         self.base_pos = np.array([0, 0, 0.1])
         self.min_dist = 0.3
         self.default_joint_pose = np.array(
@@ -165,7 +170,7 @@ class Arm:
         self.ikSolver = 0  # id of solver algorithm provided by pybullet
 
         self.joint_pose = None
-        self.init_joints = self.get_target_joints(EE_start_pos, angle=0)
+        self.init_joints = self.get_target_joints(ee_start_pos, angle=0)
         self.reset(joint_pose=self.init_joints)  # sets joint_pose
 
     def update_joint_pose(self):

@@ -2,14 +2,18 @@ import pybullet as p
 import pybullet_data
 import time
 import math
-from datetime import datetime
 import numpy as np
 import time
 from scipy.spatial.transform import Rotation as R
 import scipy.stats
 import typing as T
+import collections
 
 from sim_objects import Arm, Bottle
+
+SimResults = collections.namedtuple(
+    'SimResults', ['is_fallen', 'is_collision',
+                   'bottle_pos', 'bottle_ori', 'joint_pose'])
 
 
 class ActionSpace():
@@ -77,7 +81,7 @@ class Environment(object):
     SIM_MOST_COMMON = 1
     GRAVITY = -9.81
 
-    def __init__(self, arm, bottle, is_viz=True):
+    def __init__(self, arm: Arm, bottle: Bottle, is_viz):
         # store arm and objects
         self.arm = arm
         self.bottle = bottle
@@ -91,41 +95,36 @@ class Environment(object):
 
         # simulation run params
         # if no object moves more than this thresh, terminate sim early
-        self.no_movement_thresh = 0.001
-        self.min_iters = 10  # enough iters to let action execute fully
         self.max_iters = 300  # max number of iters in case objects oscillating
-        # number of random samples of internal params for stochastic simulation
-        self.num_rand_samples = 10
 
-        # cost parameters
-        self.target_bottle_pos = np.zeros((3,))
-        self.FALL_COST = Environment.INF
-        self.dist_cost_scale = 100
+        # Default distributions for sampling bottle parameters
+        self.fric_distrib = None
+        self.fillp_distrib = None
+        self.set_distribs()
 
-    def set_distribs(self):
-        self.mean_friction = (self.min_fric + self.max_fric) / 2.
-        # want min and max to be at 2 std deviations
-        self.std_friction = (self.max_fric - self.mean_friction) / 2.
+    def set_distribs(self, min_fric=None, max_fric=None, min_fill=None, max_fill=None):
+        if min_fric is None:
+            min_fric = self.bottle.min_fric
+        if max_fric is None:
+            max_fric = self.bottle.max_fric
+        if min_fill is None:
+            min_fill = self.bottle.min_fill
+        if max_fill is None:
+            max_fill = self.bottle.max_fill
+
+        mean_fric = (min_fric + max_fric) / 2.
+        std_fric = (max_fric - mean_fric) / 2.  # want min and max to be at 2 std deviations
         # NOTE: DO NOT USE KWARGS for scipy norm, use ARGS
         # since scipy uses "loc" for mean and "scale" for stddev, avoid passing
         # in wrong kwargs and having them ignored
-        self.fric_distrib = scipy.stats.norm(
-            self.mean_friction, self.std_friction)
+        self.fric_distrib = scipy.stats.norm(mean_fric, std_fric)
 
-        self.mean_fillp = (self.min_fill + self.max_fill) / 2.
-        self.std_fillp = (self.max_fill - self.mean_fillp) / 3.
-        self.fillp_distrib = scipy.stats.norm(
-            self.mean_fillp, self.std_fillp)
+        mean_fillp = (min_fill + max_fill) / 2.
+        std_fillp = (max_fill - mean_fillp) / 3.
+        self.fillp_distrib = scipy.stats.norm(mean_fillp, std_fillp)
 
-        print("Mean Fill: %.3f, Std: %.3f" % (self.mean_fillp, self.std_fillp))
-        print("Mean Fric: %.3f, Std: %.3f" % (self.mean_friction, self.std_friction))
-
-    def eval_cost(self, is_fallen, bottle_pos, ee_move_dist):
-        # dist = np.linalg.norm(self.target_bottle_pos[:2] - bottle_pos[:2])
-        # return self.dist_cost_scale*dist + self.FALL_COST*is_fallen
-
-        # any step incurs penalty of 1, but if falls, extra huge penalty
-        return max(ee_move_dist, self.FALL_COST * is_fallen)
+        print("Mean Fill: %.3f, Std: %.3f" % (mean_fillp, std_fillp))
+        print("Mean Fric: %.3f, Std: %.3f" % (mean_fric, std_fric))
 
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
@@ -138,7 +137,6 @@ class Environment(object):
         post-processing of these results.
         """
         all_results = []
-        # print(np.array2string(action[0], precision=2))
         for sim_params in sim_params_set:
             results = self.run_sim(action=action,
                                    sim_params=sim_params,
@@ -146,17 +144,16 @@ class Environment(object):
                                    bottle_pos=np.copy(bottle_pos),
                                    bottle_ori=bottle_ori)
             all_results.append(results)
-            # print(str(sim_params) + " fallen: %d" % results[0])
 
             # extra optimization: if arm didn't touch bottle, no need for more
             # iterations since different bottle friction/mass won't change outcome
-            (_, is_collision, new_bottle_pos, _, _) = results
-            if not is_collision:
+            if not results.is_collision:
                 break
 
         return all_results
 
-    def run_sim(self, action, sim_params: EnvParams, init_joints=None, bottle_pos=None, bottle_ori=None):
+    def run_sim(self, action: T.Tuple, sim_params: EnvParams,
+                init_joints=None, bottle_pos=None, bottle_ori=None) -> SimResults:
         """
         High-level interface with simulator: run simulation given some current state composed of
         bottle pose and arm joint poise. Specify some action to take. Generates a joint-space trajectory
@@ -167,18 +164,17 @@ class Environment(object):
 
         dq, num_iters = action
         target_joint_pose = init_joints + dq
-        joint_traj = np.linspace(init_joints,
-                                 target_joint_pose, num=num_iters)
+        joint_traj = np.linspace(init_joints, target_joint_pose, num=num_iters)
 
-        return self.simulate_plan(joint_traj=joint_traj, bottle_pos=bottle_pos, bottle_ori=bottle_ori, sim_params=sim_params)
+        return self.simulate_plan(joint_traj=joint_traj,
+                                  bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                                  sim_params=sim_params)
 
     def reset(self):
         p.resetSimulation()
         p.setGravity(0, 0, self.GRAVITY)
-        p.loadURDF(self.plane_urdf_filepath,
-                   basePosition=[0, 0, 0])
-        self.arm.kukaId = p.loadURDF(
-            self.arm_filepath, basePosition=[0, 0, 0])
+        p.loadURDF(self.plane_urdf_filepath, basePosition=[0, 0, 0])
+        self.arm.kukaId = p.loadURDF(self.arm_filepath, basePosition=[0, 0, 0])
 
     def command_new_pose(self, joint_pose):
         for ji, jval in enumerate(joint_pose):
@@ -189,7 +185,7 @@ class Environment(object):
                                     force=self.arm.force,
                                     positionGain=self.arm.position_gain)
 
-    def simulate_plan(self, joint_traj, bottle_pos, bottle_ori, sim_params: EnvParams):
+    def simulate_plan(self, joint_traj, bottle_pos, bottle_ori, sim_params: EnvParams) -> SimResults:
         """Run simulation with given joint-space trajectory. Does not reset arm
         joint angles after simulation is done, so that value can be guaranteed to be untouched.
 
@@ -207,7 +203,7 @@ class Environment(object):
 
         # create new bottle object with parameters set beforehand
         self.bottle.set_fill_proportion(sim_params.bottle_fill)
-        self.bottle.lat_fric = sim_params.bottle_fric
+        self.bottle.set_fric(sim_params.bottle_fric)
         if bottle_pos is not None:
             self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
             prev_bottle_pos = bottle_pos
@@ -274,7 +270,9 @@ class Environment(object):
         p.removeBody(self.bottle.bottle_id)
 
         # , executed_traj
-        return is_fallen, is_collision, self.bottle.pos, self.bottle.ori, self.arm.joint_pose
+        return SimResults(is_fallen=is_fallen, is_collision=is_collision,
+                          bottle_pos=self.bottle.pos, bottle_ori=self.bottle.ori,
+                          joint_pose=self.arm.joint_pose)
 
     def simulate_plan_online(self, init_joints, policy, bottle_pos, bottle_ori, sim_params: EnvParams):
         """Run simulation with given joint-space trajectory. Does not reset arm
@@ -335,9 +333,9 @@ class Environment(object):
 
     def gen_random_env_param_set(self, num=1):
         rand_fills, rand_fill_probs = self.get_random_sample_prob(
-            distrib=self.fillp_distrib, minv=self.min_fill, maxv=self.max_fill, num=num)
+            distrib=self.fillp_distrib, minv=self.bottle.min_fill, maxv=self.bottle.max_fill, num=num)
         rand_frics, rand_fric_probs = self.get_random_sample_prob(
-            distrib=self.fric_distrib, minv=self.min_fric, maxv=self.max_fric, num=num)
+            distrib=self.fric_distrib, minv=self.bottle.min_fric, maxv=self.bottle.max_fric, num=num)
 
         param_set = []
         for i in range(num):
