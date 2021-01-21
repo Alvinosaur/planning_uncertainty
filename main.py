@@ -22,15 +22,84 @@ BIMODAL = "bimodal"
 HIGH_FRIC = "high_fric"
 DEFAULT = "default"
 
+"""
+Useful Commands:
+Run planning on single planner using pre-generated simulation parameters:
+$ python main.py --single --single_low_fric --load_params --n_sims 20 --redirect_stdout
+
+Avg planning:
+$ python main.py --avg --high_fric --n_sims 10 --redirect_stdout --fall_thresh 0.1
+
+Execute the plan generated above:
+$ python main.py --single --single_low_fric --load_params --n_sims 20 \
+--redirect_stdout --replay_results --replay_dir <path/to/directory/with/results>
+
+Parse output of execution and planning steps above to calculate some statistics:
+$ python parse_results.py --results_dir --redirect_stdout <path/to/directory/with/results>
+"""
+
+
+def run_policy(planner: NaivePlanner, env: Environment, policy,
+               exec_params: EnvParams, cur_bottle_ori=np.array([0, 0, 0, 1.]),
+               break_on_fail=True, visualize=False):
+    cur_bottle_pos = planner.bottle_pos_from_state(planner.start)
+    cur_joints = planner.joint_pose_from_state(planner.start)
+    env.arm.reset(cur_joints)
+
+    bottle_goal = planner.bottle_pos_from_state(planner.goal)
+    is_fallen = False
+    executed_traj = []
+
+    for step in range(len(policy)):
+        if visualize:
+            env.goal_line_id = env.draw_line(
+                lineFrom=bottle_goal,
+                lineTo=bottle_goal + np.array([0, 0, 1]),
+                lineColorRGB=[0, 0, 1], lineWidth=1,
+                replaceItemUniqueId=None,
+                lifeTime=0)
+        step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
+            env.run_sim(policy[step], exec_params,
+                        cur_joints, cur_bottle_pos, cur_bottle_ori)
+        )
+        if visualize:
+            env.goal_line_id = env.draw_line(
+                lineFrom=bottle_goal,
+                lineTo=bottle_goal + np.array([0, 0, 1]),
+                lineColorRGB=[0, 0, 1], lineWidth=1,
+                replaceItemUniqueId=None,
+                lifeTime=0)
+        is_fallen |= step_is_fallen
+        executed_traj.append(
+            planner.format_state(bottle_pos=cur_bottle_pos, joints=cur_joints))
+
+        if is_fallen and break_on_fail:
+            break
+
+    is_success = planner.reached_goal(cur_bottle_pos)
+    return is_fallen, is_success, executed_traj, cur_bottle_ori
+
 
 def piecewise_execution(planner: NaivePlanner, env: Environment,
                         exec_params_set: t.List[EnvParams],
                         replay_results,
-                        res_fname):
+                        res_fname,
+                        visualize,
+                        max_time_s):
     if not replay_results:
-        state_path, policy, node_path = planner.plan()
-        np.savez("%s" % res_fname,
-                 state_path=state_path, policy=policy, node_path=node_path)
+        start_time = time.time()
+        try:
+            with helpers.time_limit(max_time_s):
+                state_path, policy, node_path = planner.plan()
+
+            time_taken = time.time() - start_time
+            print("time taken: %.3f" % time_taken, flush=True)
+            print("Saving plan to %s" % res_fname)
+            np.savez("%s" % res_fname,
+                     state_path=state_path, policy=policy, node_path=node_path)
+
+        except helpers.TimeoutException:
+            print("time taken: NA", flush=True)
 
     else:
         try:
@@ -46,44 +115,12 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             print("Empty Path! Skipping....")
             return
 
-        bottle_pos = planner.bottle_pos_from_state(planner.start)
-        init_joints = planner.joint_pose_from_state(planner.start)
-        env.arm.reset(init_joints)
-        bottle_ori = np.array([0, 0, 0, 1.])
-
-        bottle_goal = planner.bottle_pos_from_state(planner.goal)
-
         fall_count = 0
         success_count = 0
         for exec_i, exec_params in enumerate(exec_params_set):
             print("New Test with params: %s" % exec_params)
-            cur_joints = init_joints.copy()
-            cur_bottle_pos = bottle_pos.copy()
-            cur_bottle_ori = bottle_ori.copy()
-            is_fallen = False
-            executed_traj = []
-
-            for step in range(len(policy)):
-                env.goal_line_id = env.draw_line(
-                    lineFrom=bottle_goal,
-                    lineTo=bottle_goal + np.array([0, 0, 1]),
-                    lineColorRGB=[0, 0, 1], lineWidth=1,
-                    replaceItemUniqueId=None,
-                    lifeTime=0)
-                step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
-                    env.run_sim(policy[step], exec_params,
-                                cur_joints, cur_bottle_pos, cur_bottle_ori)
-                )
-                env.goal_line_id = env.draw_line(
-                    lineFrom=bottle_goal,
-                    lineTo=bottle_goal + np.array([0, 0, 1]),
-                    lineColorRGB=[0, 0, 1], lineWidth=1,
-                    replaceItemUniqueId=None,
-                    lifeTime=0)
-                is_fallen |= step_is_fallen
-                executed_traj.append(np.concatenate([cur_bottle_pos, cur_joints]))
-
-            is_success = planner.reached_goal(cur_bottle_pos)
+            is_fallen, is_success, _, _ = run_policy(planner, env, policy, exec_params,
+                                                     break_on_fail=True, visualize=visualize)
             print("Exec #%d: fell: %d, success: %d" %
                   (exec_i, is_fallen, is_success))
             print()
@@ -96,65 +133,49 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
         ))
 
 
-def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment, exec_params, res_fname, max_time):
-    reached_goal = False
+def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
+                                      exec_params: EnvParams, res_fname: str, max_time_s: int):
+    is_success = False
     is_fallen = False
     plan_count = 0
     final_state_path = []
     final_policy = []
     final_node_path = []
-    goal = planner.goal
-
-    if max_time == -1:
-        max_time = sys.maxsize
+    cur_bottle_ori = [0, 0, 0, 1]
+    executed_traj = None
 
     try:
-        with helpers.time_limit(max_time):
-            while not reached_goal and not is_fallen:
-                # plan from current position
+        with helpers.time_limit(max_time_s):
+            while not is_success and not is_fallen:
+                # plan from current state
                 plan_count += 1
-                state_path, policy, node_path = planner.plan()
+                if executed_traj is not None:
+                    planner.start = executed_traj[-1]
+                state_path, policy, node_path = planner.plan(bottle_ori=cur_bottle_ori)
                 final_state_path += state_path
                 final_policy += policy
                 final_node_path += node_path
 
-                bottle_pos = planner.bottle_pos_from_state(planner.start)
-                init_joints = planner.joint_pose_from_state(planner.start)
-                env.arm.reset(init_joints)
-                bottle_ori = np.array([0, 0, 0, 1])
-                cur_joints = init_joints
-                cur_bottle_pos = bottle_pos.copy()
-                cur_bottle_ori = bottle_ori.copy()
-
-                # execute found plan, terminate if bottle fell, replan if failed to reach goal
-                for step in range(len(policy)):
-                    step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
-                        env.run_sim(policy[step], exec_params,
-                                    cur_joints, cur_bottle_pos, cur_bottle_ori)
-                    )
-                    is_fallen |= step_is_fallen
-
-                    if is_fallen:
-                        break
-
-                # check at end of execution if reached goal
-                if not is_fallen:
-                    reached_goal = planner.reached_goal(cur_bottle_pos)
+                is_fallen, is_success, executed_traj, cur_bottle_ori = (
+                    run_policy(planner, env, policy, exec_params,
+                               cur_bottle_ori=cur_bottle_ori,
+                               break_on_fail=True, visualize=False)
+                )
+        if is_success:
+            print("Saving plan to %s" % res_fname)
+            np.savez("%s" % res_fname,
+                     state_path=final_state_path, policy=final_policy, node_path=final_node_path)
 
     except helpers.TimeoutException:
-        pass
+        print("time taken: NA", flush=True)
 
-    # save whatever plan was found, if any
-    np.savez("%s" % res_fname,
-             state_path=final_state_path, policy=final_policy, node_path=final_node_path)
-
-    return reached_goal, is_fallen, plan_count
+    return is_success, is_fallen, plan_count
 
 
 def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
                                exec_params_set,
                                res_fname,
-                               max_time):
+                               max_time_s):
     orig_start = planner.start
     orig_goal = planner.goal
 
@@ -164,7 +185,7 @@ def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
         piecewise_execution_replan_helper(planner, env,
                                           exec_params=exec_params,
                                           res_fname=res_fname + "_exec_%d" % exec_i,
-                                          max_time=max_time)
+                                          max_time_s=max_time_s)
 
 
 def main():
@@ -210,6 +231,7 @@ def main():
             sys.stdout = open("%s/exec_output.txt" % planner_folder, "w")
         else:
             sys.stdout = open("%s/plan_output.txt" % planner_folder, "w")
+    print("python " + " ".join(sys.argv), flush=True)  # print specified arguments
 
     if args.visualize:
         p.connect(p.GUI)  # or p.DIRECT for nongraphical version
@@ -298,7 +320,12 @@ def main():
                            dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
                            fall_thresh=args.fall_thresh)
 
-    targets = list(range(0, 12))
+    # Possibly specify a specific start-goal pair to run
+    if args.start_goal != -1:
+        targets = [args.start_goal]
+    else:
+        targets = list(range(0, 12))
+
     for start_goal_idx in targets:
         print("Start goal idx: %d" % start_goal_idx)
         res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
@@ -308,21 +335,14 @@ def main():
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
+        piecewise_execution(planner, env,
+                            exec_params_set=exec_params_set,
+                            replay_results=args.replay_results,
+                            res_fname=res_fname,
+                            visualize=args.visualize,
+                            max_time_s=max_time_s)
 
-        start_time = time.time()
-        try:
-            with helpers.time_limit(max_time_s):
-                piecewise_execution(planner, env,
-                                    exec_params_set=exec_params_set,
-                                    replay_results=args.replay_results,
-                                    res_fname=res_fname)
 
-            time_taken = time.time() - start_time
-            print("time taken: %.3f" % time_taken, flush=True)
-
-        except helpers.TimeoutException:
-            print("time taken: NA", flush=True)
-            pass
 
 
 if __name__ == "__main__":

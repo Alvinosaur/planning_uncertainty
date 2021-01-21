@@ -201,8 +201,12 @@ class Arm:
 
     def reset(self, joint_pose):
         self.joint_pose = joint_pose
-        for i in range(self.num_joints):
-            p.resetJointState(self.kukaId, i, self.joint_pose[i])
+        try:
+            for i in range(self.num_joints):
+                p.resetJointState(self.kukaId, i, self.joint_pose[i])
+        except Exception as e:
+            print(e)
+            print(f"self.num_joints: {self.num_joints}")
 
     def resetEE(self, target_pos=None, angle=0):
         p.resetBasePositionAndOrientation(

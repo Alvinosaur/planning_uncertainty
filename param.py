@@ -15,7 +15,7 @@ def parse_arguments():
     parser.add_argument('--avg', action="store_true")
 
     # Planner Agnostic
-    parser.add_argument('--max_time', action="store", type=int, default="30",
+    parser.add_argument('--max_time', action="store", type=int, default="60",
                         help="Single planner planning time limit (sec), mulitplied by N for average planner.")
     parser.add_argument('--dx', action="store", type=float, default="0.1")
     parser.add_argument('--dy', action="store", type=float, default="0.1")
@@ -24,6 +24,7 @@ def parse_arguments():
     parser.add_argument('--dtheta', action="store", type=int, default="8")
     parser.add_argument('--eps', action="store", type=float, default="5")
     parser.add_argument('--load_params', action="store_true")
+    parser.add_argument('--start_goal', action="store", type=int, default="-1")
 
     # Avg Planner
     parser.add_argument('--fall_thresh', action="store", type=float, default="0.2")

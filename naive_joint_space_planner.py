@@ -78,7 +78,7 @@ class Node(object):
         return self.cost < other.cost
 
     def __repr__(self):
-        s = "C(%.2f): Bpos(" % self.cost
+        s = "C(%.2f) | h(%.3f): Bpos(" % (self.cost, self.h)
         s += ",".join(["%.2f" % v for v in self.state[:3]])
         s += "), fall history:"
         s += ",".join(["%d" % v for v in self.fall_history])
@@ -192,9 +192,9 @@ class NaivePlanner(object):
         # print(bpos_bins[max_key][-1])
         # print(self.state_to_str(bpos), self.state_to_str(bori))
 
-        return (fall_proportion, fall_history, bpos, bori, next_joint_pos)
+        return fall_proportion, fall_history, bpos, bori, next_joint_pos
 
-    def plan(self):
+    def plan(self, bottle_ori=np.array([0, 0, 0, 1])):
         # initialize open set with start and G values
         arm_positions = self.env.arm.get_joint_link_positions(
             self.joint_pose_from_state(self.start))
@@ -203,7 +203,8 @@ class NaivePlanner(object):
         open_set = [
             Node(0, self.start,
                  nearest_arm_pos_i=nn_joint_i,
-                 nearest_arm_pos=nn_joint_pos)]
+                 nearest_arm_pos=nn_joint_pos,
+                 bottle_ori=bottle_ori)]
         closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
@@ -461,11 +462,15 @@ class NaivePlanner(object):
 
     @ staticmethod
     def bottle_pos_from_state(state):
-        return state[:3]
+        return state[:3].copy()
 
     @ staticmethod
     def joint_pose_from_state(state):
-        return state[3:]
+        return state[3:].copy()
+
+    @ staticmethod
+    def format_state(bottle_pos, joints):
+        return np.concatenate([bottle_pos, joints])
 
     @ staticmethod
     def state_to_str(state):

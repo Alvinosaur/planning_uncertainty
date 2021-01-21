@@ -1,14 +1,19 @@
 import re
-import numpy as np
-import matplotlib.pyplot as plt
+import argparse
+import os
+import sys
 
 
-single_results = "results/results.txt"
-avg_results_dir = "avg_results_0.30"
-avg_results = f"{avg_results_dir}/results.txt"
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Planning Uncertainty Parse Parameters')
+    parser.add_argument('--results_dir', action="store", type=str, default="")
+    parser.add_argument('--redirect_stdout', action="store_true")
+    args = parser.parse_args()
+
+    return args
 
 
-def parse(fname):
+def parse_exec_output(fname):
     with open(fname, "r") as f:
         text = f.read()
         results = re.findall(
@@ -20,7 +25,7 @@ def parse(fname):
     return fall_probs, success_probs
 
 
-def parse_output(fname):
+def parse_plan_output(fname):
     with open(fname, "r") as f:
         text = f.read()
         results = re.findall(
@@ -38,30 +43,23 @@ def parse_output(fname):
     return sum(num_states) / len(num_states), sum(times) / len(times), timeout_rate
 
 
-single_fall_probs, single_success_probs = parse(single_results)
-avg_fall_probs, avg_success_probs = parse(avg_results)
+if __name__ == "__main__":
+    args = parse_arguments()
+    if args.redirect_stdout:
+        sys.stdout = open(os.path.join(args.results_dir, "parse_results.txt"), "w")
 
-print("Fall Probs:")
-print("single:")
-print(single_fall_probs)
-print("avg:")
-print(avg_fall_probs)
-print("(Avg Fall Prob) Single: %.3f, Avg: %.3f" % (
-    sum(single_fall_probs) / len(single_fall_probs),
-    sum(avg_fall_probs) / len(avg_fall_probs)
-))
+    print("Plan Statistics:")
+    avg_num_states, avg_plan_time, avg_timeout_rate = parse_plan_output(
+        os.path.join(args.results_dir, "plan_output.txt"))
+    print("Avg num states expanded: %.1f" % avg_num_states)
+    print("Avg plan time: %.3f" % avg_plan_time)
+    print("Avg timeout rate: %.3f" % avg_timeout_rate)
 
-print("Success Probs:")
-print("single:")
-print(single_success_probs)
-print("avg:")
-print(avg_success_probs)
-print("(Avg Success Prob) Single: %.3f, Avg: %.3f" % (
-    sum(single_success_probs) / len(single_success_probs),
-    sum(avg_success_probs) / len(avg_success_probs)
-))
-
-avg_num_states, avg_times, avg_timeout_rate = parse_output(f"{avg_results_dir}/output.txt")
-num_states, times, timeout_rate = parse_output("results/output.txt")
-print(f"Avg num states: {avg_num_states}, plan time: {avg_times}, avg timeout rate: {avg_timeout_rate}")
-print(f"Num states: {num_states}, plan time: {times}, timeout rate: {timeout_rate}")
+    print("Exec Statistics:")
+    fall_probs, success_probs = parse_exec_output(os.path.join(args.results_dir, "exec_output.txt"))
+    print("Fall Probs:")
+    print(fall_probs)
+    print("Avg Fall Prob: %.3f" % (sum(fall_probs) / len(fall_probs)))
+    print("Success Probs:")
+    print(success_probs)
+    print("Avg Success Prob: %.3f" % (sum(success_probs) / len(success_probs)))
