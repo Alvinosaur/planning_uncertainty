@@ -12,9 +12,9 @@ import typing as t
 
 from param import parse_arguments
 from sim_objects import Bottle, Arm
-from environment import Environment, ActionSpace, EnvParams
+from environment import Environment, ActionSpace, EnvParams, StateTuple
 from naive_joint_space_planner import NaivePlanner, SINGLE, AVG
-import experiment_helpers as helpers
+import helpers
 
 # Constants and Enums
 GRAVITY = -9.81
@@ -50,6 +50,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
     is_fallen = False
     executed_traj = []
 
+    print(exec_params)
     for step in range(len(policy)):
         if visualize:
             env.goal_line_id = env.draw_line(
@@ -58,9 +59,11 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
                 lineColorRGB=[0, 0, 1], lineWidth=1,
                 replaceItemUniqueId=None,
                 lifeTime=0)
+        state_tuple = StateTuple(bottle_pos=cur_bottle_pos, bottle_ori=cur_bottle_ori,
+                                 joints=cur_joints)
         step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
-            env.run_sim(policy[step], exec_params,
-                        cur_joints, cur_bottle_pos, cur_bottle_ori)
+            env.run_sim(state=state_tuple, action=policy[step], sim_params=exec_params,
+                        prev_state=None, prev_action=None)
         )
         if visualize:
             env.goal_line_id = env.draw_line(
@@ -94,7 +97,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
             time_taken = time.time() - start_time
             print("time taken: %.3f" % time_taken, flush=True)
-            print("Saving plan to %s" % res_fname)
+            print("Saving plan to %s" % res_fname, flush=True)
             np.savez("%s" % res_fname,
                      state_path=state_path, policy=policy, node_path=node_path)
 
@@ -112,17 +115,17 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
         state_path = results["state_path"]
         node_path = results["node_path"]
         if len(policy) == 0:
-            print("Empty Path! Skipping....")
+            print("Empty Path! Skipping....", flush=True)
             return
 
         fall_count = 0
         success_count = 0
         for exec_i, exec_params in enumerate(exec_params_set):
-            print("New Test with params: %s" % exec_params)
+            print("New Test with params: %s" % exec_params, flush=True)
             is_fallen, is_success, _, _ = run_policy(planner, env, policy, exec_params,
                                                      break_on_fail=True, visualize=visualize)
             print("Exec #%d: fell: %d, success: %d" %
-                  (exec_i, is_fallen, is_success))
+                  (exec_i, is_fallen, is_success), flush=True)
             print()
             success_count += is_success
             fall_count += is_fallen
@@ -130,7 +133,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
         print("Fall Rate: %.2f, success rate: %.2f" % (
             fall_count / float(len(exec_params_set)),
             success_count / float(len(exec_params_set))
-        ))
+        ), flush=True)
 
 
 def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
@@ -161,8 +164,9 @@ def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
                                cur_bottle_ori=cur_bottle_ori,
                                break_on_fail=True, visualize=False)
                 )
+                print(f"Execution of Plan: {'success' if is_success else 'fail'}")
         if is_success:
-            print("Saving plan to %s" % res_fname)
+            print("Saving plan to %s" % res_fname, flush=True)
             np.savez("%s" % res_fname,
                      state_path=final_state_path, policy=final_policy, node_path=final_node_path)
 
@@ -259,7 +263,10 @@ def main():
         start_goals = pickle.load(f)
 
     # Load execution params (unused if args.replay_results False)
-    with open("sim_params_set.obj", "rb") as f:
+    params_path = "sim_params_set.obj"
+    if args.params_path != "":
+        params_path = args.params_path
+    with open(params_path, "rb") as f:
         default_params = pickle.load(f)
         exec_params_set = default_params["exec_params_set"]
 
@@ -318,16 +325,20 @@ def main():
     planner = NaivePlanner(env=env, sim_mode=plan_type, sim_params_set=plan_params_sets,
                            dist_thresh=args.goal_thresh, eps=args.eps, da_rad=da_rad,
                            dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
-                           fall_thresh=args.fall_thresh)
+                           fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost)
 
     # Possibly specify a specific start-goal pair to run
     if args.start_goal != -1:
-        targets = [args.start_goal]
+        targets = [args.start_goal, ]
     else:
         targets = list(range(0, 12))
 
+    # Possibly specify a specific exec_param to run
+    if args.exec_param != -1:
+        exec_params_set = [exec_params_set[args.exec_param], ]
+
     for start_goal_idx in targets:
-        print("Start goal idx: %d" % start_goal_idx)
+        print("Start goal idx: %d" % start_goal_idx, flush=True)
         res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
         (startb, goalb, start_joints) = start_goals[start_goal_idx]
         start_state = helpers.bottle_EE_to_state(
@@ -335,14 +346,26 @@ def main():
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
-        piecewise_execution(planner, env,
-                            exec_params_set=exec_params_set,
-                            replay_results=args.replay_results,
-                            res_fname=res_fname,
-                            visualize=args.visualize,
-                            max_time_s=max_time_s)
 
+        if args.use_replan:
+            if args.replan_exec_low_fric:
+                exec_params = EnvParams(0.70, 0.08, 0.33, 0.11)
+            elif args.replan_exec_high_fric:
+                exec_params = EnvParams(0.70, 0.16, 0.33, 0.11)
+            else:
+                exec_params = EnvParams(0.70, 0.13, 0.33, 0.11)
 
+            piecewise_execution_replan_helper(planner, env,
+                                              exec_params=exec_params,
+                                              res_fname=res_fname,
+                                              max_time_s=max_time_s)
+        else:
+            piecewise_execution(planner, env,
+                                exec_params_set=exec_params_set,
+                                replay_results=args.replay_results,
+                                res_fname=res_fname,
+                                visualize=args.visualize,
+                                max_time_s=max_time_s)
 
 
 if __name__ == "__main__":

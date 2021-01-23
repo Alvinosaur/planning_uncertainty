@@ -14,7 +14,13 @@ def parse_arguments():
     parser.add_argument('--single', action="store_true")
     parser.add_argument('--avg', action="store_true")
 
+    # Replanning after execution
+    parser.add_argument('--use_replan', action="store_true")
+    parser.add_argument('--replan_exec_low_fric', action="store_true")
+    parser.add_argument('--replan_exec_high_fric', action="store_true")
+
     # Planner Agnostic
+    parser.add_argument('--use_ee_trans_cost', action="store", type=bool, default="true")
     parser.add_argument('--max_time', action="store", type=int, default="60",
                         help="Single planner planning time limit (sec), mulitplied by N for average planner.")
     parser.add_argument('--dx', action="store", type=float, default="0.1")
@@ -23,8 +29,11 @@ def parse_arguments():
     parser.add_argument('--goal_thresh', action="store", type=float, default="0.1")
     parser.add_argument('--dtheta', action="store", type=int, default="8")
     parser.add_argument('--eps', action="store", type=float, default="5")
-    parser.add_argument('--load_params', action="store_true")
     parser.add_argument('--start_goal', action="store", type=int, default="-1")
+    parser.add_argument('--exec_param', action="store", type=int, default="-1")
+    # Optional load planning params from a file
+    parser.add_argument('--load_params', action="store_true")
+    parser.add_argument('--params_path', action="store", type=str, default="")
 
     # Avg Planner
     parser.add_argument('--fall_thresh', action="store", type=float, default="0.2")

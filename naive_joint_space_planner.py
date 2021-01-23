@@ -1,17 +1,13 @@
 import pybullet as p
-import pybullet_data
 import time
 import math
-from datetime import datetime
 import numpy as np
-import matplotlib.pyplot as plt
-# import pandas as pd
-# import seaborn as sn
+
 import heapq
 from pyquaternion import Quaternion
 
 from sim_objects import Bottle, Arm
-from environment import Environment, ActionSpace
+from environment import Environment, ActionSpace, StateTuple
 
 
 """
@@ -62,7 +58,7 @@ AVG = "avg"
 
 class Node(object):
     def __init__(self, cost, state, nearest_arm_pos_i,
-                 nearest_arm_pos, fall_history=[], fall_prob=-1,
+                 nearest_arm_pos, ee_pos, fall_history=[], fall_prob=-1,
                  bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0):
         self.cost = cost
         self.fall_prob = fall_prob
@@ -73,6 +69,7 @@ class Node(object):
         self.bottle_ori = bottle_ori
         self.nearest_arm_pos_i = nearest_arm_pos_i
         self.nearest_arm_pos = nearest_arm_pos
+        self.ee_pos = ee_pos
 
     def __lt__(self, other):
         return self.cost < other.cost
@@ -88,7 +85,7 @@ class Node(object):
 class NaivePlanner(object):
     def __init__(self, env, sim_mode, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
                  da_rad=15 * math.pi / 180.0, visualize=False, start=None, goal=None,
-                 fall_thresh=0.2):
+                 fall_thresh=0.2, use_ee_trans_cost=True):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -99,10 +96,16 @@ class NaivePlanner(object):
         # discretize continuous state space
         self.dpos = np.array([dx, dy, dz])
 
+        # Costs and weights
+        self.use_ee_trans_cost = use_ee_trans_cost
+        self.time_cost_weight = 0.0
+        # self.time_cost_weight = 0.025  # chosen since avg EE dist moved cost is 0.05
+        # and time_cost_weight at most will be scaled by 2
+
         # define action space
         self.da = da_rad
         self.num_joints = env.arm.num_joints
-        self.A = ActionSpace(num_DOF=self.num_joints, da_rad=self.da)
+        self.A = ActionSpace(num_dof=self.num_joints, da_rad=self.da)
         self.G = dict()
         self.use_EE = False
         self.guided_direction = True
@@ -204,7 +207,8 @@ class NaivePlanner(object):
             Node(0, self.start,
                  nearest_arm_pos_i=nn_joint_i,
                  nearest_arm_pos=nn_joint_pos,
-                 bottle_ori=bottle_ori)]
+                 bottle_ori=bottle_ori,
+                 ee_pos=arm_positions[-1])]
         closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
@@ -235,9 +239,24 @@ class NaivePlanner(object):
             n = heapq.heappop(open_set)
             state = n.state
             state_key = self.state_to_key(state)
+
+            if num_expansions > 1:
+                prev_ai, prev_node = transitions[state_key]
+                prev_action = self.A.get_action(prev_ai)
+                prev_joints = self.joint_pose_from_state(prev_node.state)
+                prev_bottle_pos = self.bottle_pos_from_state(prev_node.state)
+                prev_bottle_ori = prev_node.bottle_ori
+                prev_state_tuple = StateTuple(bottle_pos=prev_bottle_pos,
+                                              bottle_ori=prev_bottle_ori,
+                                              joints=prev_joints)
+            else:
+                prev_state_tuple = None
+                prev_action = None
+
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
+            cur_state_tuple = StateTuple(bottle_pos=bottle_pos, bottle_ori=bottle_ori, joints=cur_joints)
             guided_bottle_pos = self.get_guided_bottle_pos(bottle_pos)
 
             print(n)
@@ -276,8 +295,8 @@ class NaivePlanner(object):
                     # only use one simulation parameter set
                     (is_fallen, _, next_bottle_pos,
                      next_bottle_ori, next_joint_pose) = self.sim_func(
-                        action=action, init_joints=cur_joints,
-                        bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                        action=action, state=cur_state_tuple,
+                        prev_state=prev_state_tuple, prev_action=prev_action,
                         sim_params=self.sim_params_set[0])
                     invalid = is_fallen
                     fall_history = [is_fallen]
@@ -285,8 +304,8 @@ class NaivePlanner(object):
 
                 else:
                     results = self.sim_func(
-                        action=action, init_joints=cur_joints,
-                        bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                        action=action, state=cur_state_tuple,
+                        prev_state=prev_state_tuple, prev_action=prev_action,
                         sim_params_set=self.sim_params_set)
 
                     (fall_prob, fall_history, next_bottle_pos,
@@ -307,7 +326,8 @@ class NaivePlanner(object):
                 new_arm_positions = self.env.arm.get_joint_link_positions(
                     next_joint_pose)
                 trans_cost = (self.calc_trans_cost(n, new_arm_positions) +
-                              1 * fall_prob)
+                              1 * fall_prob +
+                              self.time_cost_weight * self.A.get_action_time_cost(action))
 
                 # build next state and check if already expanded
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
@@ -320,8 +340,6 @@ class NaivePlanner(object):
 
                 # Quick FIX: use EE for transition costs so set nn_joint to EE
                 # still true b/c midpoints + joints, so last item is still last joint (EE)
-                nn_joint_i = -1
-                nn_joint_pos = new_arm_positions[-1]
 
                 h = self.heuristic(next_state, arm_bottle_dist)
                 new_G = cur_cost + trans_cost
@@ -347,7 +365,8 @@ class NaivePlanner(object):
                         state=next_state,
                         nearest_arm_pos_i=nn_joint_i,
                         nearest_arm_pos=nn_joint_pos,
-                        bottle_ori=next_bottle_ori))
+                        bottle_ori=next_bottle_ori,
+                        ee_pos=new_arm_positions[-1]))
 
                     # build directed graph
                     transitions[next_state_key] = (ai, n)
@@ -423,10 +442,15 @@ class NaivePlanner(object):
         return min_dist, min_i, min_pos
 
     def calc_trans_cost(self, n: Node, new_arm_positions):
-        prev_nearest_ji = n.nearest_arm_pos_i
-        prev_nearest_j = np.array(n.nearest_arm_pos)
-        new_nearest_j = np.array(new_arm_positions[prev_nearest_ji])
-        dist_traveled = np.linalg.norm(prev_nearest_j - new_nearest_j)
+        if self.use_ee_trans_cost:
+            dist_traveled = np.linalg.norm(
+                np.array(n.ee_pos) - np.array(new_arm_positions[-1]))
+
+        else:
+            prev_nearest_ji = n.nearest_arm_pos_i
+            prev_nearest_j = np.array(n.nearest_arm_pos)
+            new_nearest_j = np.array(new_arm_positions[prev_nearest_ji])
+            dist_traveled = np.linalg.norm(prev_nearest_j - new_nearest_j)
         return dist_traveled
 
     def heuristic(self, state, dist_arm_to_bottle):

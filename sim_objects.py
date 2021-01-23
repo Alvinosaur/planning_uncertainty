@@ -10,12 +10,13 @@ TWO_PI = 2 * PI
 
 
 class Bottle:
-    WATER_DENSITY = 997    # kg/m³
-    VOL_TO_MASS = 0.0296   # fl-oz to kg
+    WATER_DENSITY = 997  # kg/m³
     PLASTIC_MASS = 0.0127  # kg
     PLANE_OFFSET = 0.095
-    DEFAULT_RAD = 0.03175    # m
-    DEFAULT_HEIGHT = 0.1905  # m
+    # height and diameter of bottle of water
+    # (diameter / 2) * in_to_cm * cm_to_m
+    DEFAULT_RAD = (2.8 / 2.0) * 2.54 * 0.01  # m
+    DEFAULT_HEIGHT = 10.1 * 2.54 * 0.01  # m
     DEFAULT_FRIC = 0.1  # plastic-wood dynamic friction
     DEFAULT_FILL = 0.5
 
@@ -34,6 +35,7 @@ class Bottle:
         self.max_volume = 16.9  # fl-oz
         self.radius = radius  # m
         self.height = height  # m
+        self.max_volume = math.pi * self.radius ** 2 * self.height  # m^3
         self.lat_fric = fric
         self.min_fric = 0.05
         self.max_fric = 0.2
@@ -65,7 +67,7 @@ class Bottle:
 
     def mass_from_fill(self, fill_prop):
         return Bottle.PLASTIC_MASS + (
-                fill_prop * self.max_volume * Bottle.VOL_TO_MASS)
+                fill_prop * self.max_volume * self.WATER_DENSITY)
 
     def center_of_mass_from_fill(self, fill_prop):
         # calculate center of mass of water bottle
@@ -112,15 +114,17 @@ class Bottle:
             lateralFriction=self.lat_fric
         )
 
-    def check_is_fallen(self):
+    def calc_vert_angle(self, ori=None):
         self.update_pose()
+        if ori is None:
+            ori = self.ori
         z_axis = np.array([0, 0, 1])
-        rot_mat = R.from_quat(self.ori).as_matrix()
+        rot_mat = R.from_quat(ori).as_matrix()
         new_z_axis = rot_mat @ z_axis
         angle = math.acos(z_axis @ new_z_axis /
                           (np.linalg.norm(z_axis) * np.linalg.norm(new_z_axis)))
-        # when z-axis rotation is 90deg
-        return abs(angle) > (20 * math.pi / 180)
+        # when z-axis rotation is 90deg (upright)
+        return angle
 
 
 class Arm:
