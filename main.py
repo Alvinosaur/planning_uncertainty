@@ -9,6 +9,7 @@ import sys
 import json
 import datetime
 import typing as t
+import re
 
 from param import parse_arguments
 from sim_objects import Bottle, Arm
@@ -148,6 +149,7 @@ def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
     executed_traj = None
 
     try:
+        start_time = time.time()
         with helpers.time_limit(max_time_s):
             while not is_success and not is_fallen:
                 # plan from current state
@@ -164,11 +166,19 @@ def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
                                cur_bottle_ori=cur_bottle_ori,
                                break_on_fail=True, visualize=False)
                 )
-                print(f"Execution of Plan: {'success' if is_success else 'fail'}")
-        if is_success:
-            print("Saving plan to %s" % res_fname, flush=True)
-            np.savez("%s" % res_fname,
-                     state_path=final_state_path, policy=final_policy, node_path=final_node_path)
+                if is_success:
+                    status_msg = "success"
+                elif is_fallen:
+                    status_msg = "failure, knocked over"
+                else:
+                    status_msg = "failure, replanning..."
+
+                print(f"Execution of Plan: {status_msg}")
+                time_taken = time.time() - start_time
+                print("time taken: %.3f" % time_taken, flush=True)
+                print("Saving plan to %s" % res_fname, flush=True)
+                np.savez("%s" % res_fname,
+                         state_path=final_state_path, policy=final_policy, node_path=final_node_path)
 
     except helpers.TimeoutException:
         print("time taken: NA", flush=True)
@@ -192,6 +202,23 @@ def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
                                           max_time_s=max_time_s)
 
 
+def gen_exec_params(env):
+    """
+    Uniform distribution across low, medium ,and high friction
+    """
+    env.set_distribs(min_fric=0.14, max_fric=0.16)
+    exec_params_set = env.gen_random_env_param_set(num=5)
+
+    # Sample 1/4 from low friction distribution
+    env.set_distribs(min_fric=0.05, max_fric=0.08)
+    exec_params_set += env.gen_random_env_param_set(num=5)
+
+    env.set_distribs(min_fric=0.09, max_fric=0.13)
+    exec_params_set += env.gen_random_env_param_set(num=5)
+
+    return exec_params_set
+
+
 def main():
     date_time_str = '@'.join(str(datetime.datetime.now()).split(' '))
     args = parse_arguments()
@@ -210,15 +237,11 @@ def main():
     if args.single:
         plan_type = SINGLE
         sub_dir = "/%s" % date_time_str
-        max_time_s = args.max_time
 
     elif args.avg:
         plan_type = AVG
         fall_thresh = args.fall_thresh
         sub_dir = "/%s_fall_thresh_%.2f" % (date_time_str, fall_thresh)
-        # Avg Planner allotted N x max time of single planner since at worse
-        # case needs to simulate each action N times
-        max_time_s = args.n_sims * args.max_time
     else:
         raise Exception("Need to specify planner type with --single or --avg")
 
@@ -232,9 +255,9 @@ def main():
     # General
     if args.redirect_stdout:
         if args.replay_results:
-            sys.stdout = open("%s/exec_output.txt" % planner_folder, "w")
+            sys.stdout = open(os.path.join(planner_folder, "exec_output.txt"), "w")
         else:
-            sys.stdout = open("%s/plan_output.txt" % planner_folder, "w")
+            sys.stdout = open(os.path.join(planner_folder, "plan_output.txt"), "w")
     print("python " + " ".join(sys.argv), flush=True)  # print specified arguments
 
     if args.visualize:
@@ -261,6 +284,7 @@ def main():
     # Load start-goal pairs to solve
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
+        pickle.dump
 
     # Load execution params (unused if args.replay_results False)
     params_path = "sim_params_set.obj"
@@ -268,11 +292,11 @@ def main():
         params_path = args.params_path
     with open(params_path, "rb") as f:
         default_params = pickle.load(f)
-        exec_params_set = default_params["exec_params_set"]
 
     # generate new planning env parameters, not exec
     if args.load_params:
         plan_params_sets = default_params["plan_params_sets"]
+        exec_params_set = default_params["exec_params_set"]
         if args.n_sims != len(plan_params_sets):
             raise Exception(
                 f"n_sims {args.n_sims} != len(plan_params_set) {len(plan_params_sets)}")
@@ -280,7 +304,7 @@ def main():
         print(f"Sampling {sample_strat} distribution")
         # unimodal high friction
         if sample_strat == HIGH_FRIC:
-            env.set_distribs(min_fric=0.15, max_fric=0.2)
+            env.set_distribs(min_fric=0.13, max_fric=bottle.max_fric)
             plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
 
         # bimodal low and high friction with mode being high friction
@@ -288,28 +312,36 @@ def main():
             # Sample 3/4 from high friction distribution since mode simulation
             # results needs to be high friction to be more conservative and avoid
             # avoid knocking bottle over
-            env.set_distribs(min_fric=0.15, max_fric=0.2)
+            num_high_fric = int(args.n_sims * 3 / 4.)
+            num_low_fric = args.n_sims - num_high_fric
+            env.set_distribs(min_fric=0.13, max_fric=bottle.max_fric)
             plan_params_sets = env.gen_random_env_param_set(
-                num=int(args.n_sims * 3 / 4.))
+                num=num_high_fric)
 
             # Sample 1/4 from low friction distribution
-            env.set_distribs(min_fric=0.05, max_fric=0.1)
+            env.set_distribs(min_fric=bottle.min_fric, max_fric=0.08)
             plan_params_sets += env.gen_random_env_param_set(
-                num=int(args.n_sims * 1 / 4.))
+                num=num_low_fric)
 
         else:
             # unimodal at medium friction
-            env.set_distribs(min_fric=0.05, max_fric=0.2)
+            env.set_distribs(min_fric=bottle.min_fric, max_fric=bottle.max_fric)
             plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
+
+        assert (len(plan_params_sets) == args.n_sims)
+
+        # Execution evaluation parameters
+        exec_params_set = gen_exec_params(env)
+
     # Test if single planner using low and high friction produce different performance
     if plan_type == SINGLE:
         if args.single_low_fric:
             print("Manually forcing single planner to use LOW friction")
-            plan_params_sets[0] = EnvParams(0.70, 0.08, 0.33, 0.11)
+            plan_params_sets[0] = EnvParams(0.50, 0.08, 1.0, 1.0)
 
         elif args.single_high_fric:
             print("Manually forcing single planner to use HIGH friction")
-            plan_params_sets[0] = EnvParams(0.70, 0.175, 0.33, 0.11)
+            plan_params_sets[0] = EnvParams(0.50, 0.13, 1.0, 1.0)
 
     # save all parameters used
     if not args.replay_results:
@@ -330,8 +362,16 @@ def main():
     # Possibly specify a specific start-goal pair to run
     if args.start_goal != -1:
         targets = [args.start_goal, ]
+    elif args.start_goal_range != "":
+        try:
+            left, right = re.findall("(\d+)-(\d+)", args.start_goal_range)[0]
+            targets = list(range(int(left), int(right)))
+        except:
+            print("Failed to parse start_goal_range string: %s, requires format (\d+)-(\d+)" %
+                  args.start_goal_range)
+            exit(-1)
     else:
-        targets = list(range(0, 12))
+        targets = list(range(0, 11))
 
     # Possibly specify a specific exec_param to run
     if args.exec_param != -1:
@@ -341,32 +381,34 @@ def main():
         print("Start goal idx: %d" % start_goal_idx, flush=True)
         res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
         (startb, goalb, start_joints) = start_goals[start_goal_idx]
+        goalb -= np.array([0.2, 0, 0])
         start_state = helpers.bottle_EE_to_state(
             bpos=startb, arm=arm, joints=start_joints)
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
         planner.start = start_state
         planner.goal = goal_state
 
-        if args.use_replan:
+        if args.use_replan and not args.replay_results:
             if args.replan_exec_low_fric:
-                exec_params = EnvParams(0.70, 0.08, 0.33, 0.11)
+                exec_params = EnvParams(0.50, 0.06, 0.33, 0.11)
             elif args.replan_exec_high_fric:
-                exec_params = EnvParams(0.70, 0.16, 0.33, 0.11)
+                exec_params = EnvParams(0.50, 0.14, 0.33, 0.11)
             else:
-                exec_params = EnvParams(0.70, 0.13, 0.33, 0.11)
+                exec_params = EnvParams(0.50, 0.10, 0.33, 0.11)
 
             piecewise_execution_replan_helper(planner, env,
                                               exec_params=exec_params,
                                               res_fname=res_fname,
-                                              max_time_s=max_time_s)
+                                              max_time_s=args.max_time)
         else:
             piecewise_execution(planner, env,
                                 exec_params_set=exec_params_set,
                                 replay_results=args.replay_results,
                                 res_fname=res_fname,
                                 visualize=args.visualize,
-                                max_time_s=max_time_s)
+                                max_time_s=args.max_time)
 
 
 if __name__ == "__main__":
     main()
+

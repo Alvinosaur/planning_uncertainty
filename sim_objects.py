@@ -38,8 +38,8 @@ class Bottle:
         self.max_volume = math.pi * self.radius ** 2 * self.height  # m^3
         self.lat_fric = fric
         self.min_fric = 0.05
-        self.max_fric = 0.2
-        self.min_fill = 0.3
+        self.max_fric = 0.15
+        self.min_fill = 0.2
         self.max_fill = 1.0
 
         # sets mass and center of mass
@@ -205,12 +205,8 @@ class Arm:
 
     def reset(self, joint_pose):
         self.joint_pose = joint_pose
-        try:
-            for i in range(self.num_joints):
-                p.resetJointState(self.kukaId, i, self.joint_pose[i])
-        except Exception as e:
-            print(e)
-            print(f"self.num_joints: {self.num_joints}")
+        for i in range(self.num_joints):
+            p.resetJointState(self.kukaId, i, self.joint_pose[i])
 
     def resetEE(self, target_pos=None, angle=0):
         p.resetBasePositionAndOrientation(

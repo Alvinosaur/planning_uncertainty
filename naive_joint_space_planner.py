@@ -199,7 +199,12 @@ class NaivePlanner(object):
 
     def plan(self, bottle_ori=np.array([0, 0, 0, 1])):
         # initialize open set with start and G values
-        arm_positions = self.env.arm.get_joint_link_positions(
+        try:
+            arm_positions = self.env.arm.get_joint_link_positions(
+            self.joint_pose_from_state(self.start))
+        except:
+            self.env.reset()
+            arm_positions = self.env.arm.get_joint_link_positions(
             self.joint_pose_from_state(self.start))
         _, nn_joint_i, nn_joint_pos = (
             self.dist_arm_to_bottle(self.start, arm_positions))
@@ -259,7 +264,7 @@ class NaivePlanner(object):
             cur_state_tuple = StateTuple(bottle_pos=bottle_pos, bottle_ori=bottle_ori, joints=cur_joints)
             guided_bottle_pos = self.get_guided_bottle_pos(bottle_pos)
 
-            print(n)
+            print(n, flush=True)
             if state_key in closed_set:
                 continue
             closed_set.add(state_key)

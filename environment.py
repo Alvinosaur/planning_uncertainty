@@ -123,17 +123,17 @@ class Environment(object):
             max_fill = self.bottle.max_fill
 
         mean_fric = (min_fric + max_fric) / 2.
-        std_fric = (max_fric - mean_fric) / 2.  # want min and max to be at 2 std deviations
+        std_fric = (max_fric - mean_fric) / 2.5  # want min and max to be at 2.5 std deviations
         # NOTE: DO NOT USE KWARGS for scipy norm, use ARGS
         # since scipy uses "loc" for mean and "scale" for stddev, avoid passing
         # in wrong kwargs and having them ignored
         self.fric_distrib = scipy.stats.norm(mean_fric, std_fric)
 
         mean_fillp = (min_fill + max_fill) / 2.
-        std_fillp = (max_fill - mean_fillp) / 3.
-        self.fillp_distrib = scipy.stats.norm(mean_fillp, std_fillp)
+        # std_fillp = (max_fill - mean_fillp) / 3.
+        self.fillp_distrib = scipy.stats.uniform(loc=min_fill, scale=max_fill - min_fill)
 
-        print("Mean Fill: %.3f, Std: %.3f" % (mean_fillp, std_fillp))
+        print("Mean Fill: %.3f" % mean_fillp)
         print("Mean Fric: %.3f, Std: %.3f" % (mean_fric, std_fric))
 
     def change_bottle_pos(self, new_pos):
@@ -261,7 +261,7 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
-                time.sleep(0.002)
+                time.sleep(0.001)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory

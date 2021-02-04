@@ -30,6 +30,7 @@ def parse_arguments():
     parser.add_argument('--dtheta', action="store", type=int, default="8")
     parser.add_argument('--eps', action="store", type=float, default="5")
     parser.add_argument('--start_goal', action="store", type=int, default="-1")
+    parser.add_argument('--start_goal_range', action="store", type=str, default="")
     parser.add_argument('--exec_param', action="store", type=int, default="-1")
     # Optional load planning params from a file
     parser.add_argument('--load_params', action="store_true")

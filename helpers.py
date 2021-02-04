@@ -24,7 +24,7 @@ def time_limit(seconds):
     def signal_handler(signum, frame):
         raise TimeoutException("Timed out!")
     signal.signal(signal.SIGALRM, signal_handler)
-    if seconds == -1:
+    if seconds != -1:
         signal.alarm(seconds)
     try:
         yield

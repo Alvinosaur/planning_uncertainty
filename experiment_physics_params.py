@@ -12,7 +12,7 @@ GRAVITY = -9.81
 dtheta = 8  # degrees
 
 # params
-VISUALIZE = True
+VISUALIZE = False
 
 fill = 1.0
 friction = 0.08
@@ -47,27 +47,50 @@ action = (np.array([-0.16755161, -0., -0., -0., -0., -0., -0.]),
 fig, ax = plt.subplots(figsize=(10, 6))
 ax.set_ylim([0.45, 0.6])
 ax.set_xlim([0.15, 0.4])
-# fills = [0.2, 0.4, 0.6, 0.8, 1.0]
+fills = np.linspace(start=0.2, stop=1.0, endpoint=True, num=9)  # 0.2, 0.3, ... 1.0
 # frics = [0.05, 0.09, 0.12, 0.14, 0.15, 0.151, 0.152]
 frics = []
-frics += np.linspace(start=0.13, stop=0.16, num=16).tolist()
-for fric in frics:
+frics += np.linspace(start=0.06, stop=0.12, num=16).tolist()
+fric_counts = np.zeros_like(frics)
+# for fill in fills:
+for i, fric in enumerate(frics):
     sim_params.bottle_fric = fric
+    sim_params.bottle_fill = fill
     results = env.run_sim(action=action, sim_params=sim_params, state=state)
     x, y, z = results.bottle_pos
+    fric_counts[i] += results.is_fallen
     print("fric(%.5f), x(%.3f), y(%.3f), fall(%d)" % (fric, x, y, results.is_fallen))
     ax.scatter([x], [y], s=10, marker="o", label='%.5f' % fric)
+
+# print(frics)
+# print(fric_counts / len(fills))
 
 plt.title("Pos vs bottle fric @ fill=%.2f" % sim_params.bottle_fill)
 plt.legend(loc='upper left')
 plt.show()
 
-# No noticeable change from different bottle fill parameters
+# No noticeable change from different bottle fill parameters at low friction
 # fills = [0.2, 0.4, 0.6, 0.8, 1.0]
 # [0.26415718 0.53237922 0.12825468]
 # [0.26555587 0.53066559 0.12824613]
 # [0.26363408 0.53215477 0.12824886]
 # [0.2632767  0.53188981 0.12824921]
 # [0.26412209 0.53170024 0.12824733]
+# BUT at higher friction values, choice of fill seems to matter much more
+# Also seems like having a mean of 0.146 friction is best
+# 2nd std dev should be +/- 0.08
 
-# bottle friction above
+
+"""
+Frictions:
+[0.13, 0.132, 0.134, 0.136, 
+0.138, 0.14, 0.142, 0.144, 
+ 0.146, 0.148, 0.15, 0.152, 
+ 0.154, 0.156, 0.158, 0.16]
+ 
+Their respective average failure counts varied across different bottle fills:
+[0.         0.         0.         0.         
+0.         0.         0.         0.         
+0.33333333 0.44444444 0.55555556 0.66666667
+ 0.66666667 0.77777778 0.77777778 0.77777778]
+"""
