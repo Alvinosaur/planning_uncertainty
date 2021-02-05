@@ -284,7 +284,6 @@ def main():
     # Load start-goal pairs to solve
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
-        pickle.dump
 
     # Load execution params (unused if args.replay_results False)
     params_path = "sim_params_set.obj"
@@ -304,7 +303,7 @@ def main():
         print(f"Sampling {sample_strat} distribution")
         # unimodal high friction
         if sample_strat == HIGH_FRIC:
-            env.set_distribs(min_fric=0.13, max_fric=bottle.max_fric)
+            env.set_distribs(min_fric=0.10, max_fric=bottle.max_fric)
             plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
 
         # bimodal low and high friction with mode being high friction
@@ -314,7 +313,7 @@ def main():
             # avoid knocking bottle over
             num_high_fric = int(args.n_sims * 3 / 4.)
             num_low_fric = args.n_sims - num_high_fric
-            env.set_distribs(min_fric=0.13, max_fric=bottle.max_fric)
+            env.set_distribs(min_fric=0.10, max_fric=bottle.max_fric)
             plan_params_sets = env.gen_random_env_param_set(
                 num=num_high_fric)
 
@@ -337,11 +336,15 @@ def main():
     if plan_type == SINGLE:
         if args.single_low_fric:
             print("Manually forcing single planner to use LOW friction")
-            plan_params_sets[0] = EnvParams(0.50, 0.08, 1.0, 1.0)
+            plan_params_sets[0] = EnvParams(0.50, bottle.min_fric, 1.0, 1.0)
 
         elif args.single_high_fric:
             print("Manually forcing single planner to use HIGH friction")
-            plan_params_sets[0] = EnvParams(0.50, 0.13, 1.0, 1.0)
+            plan_params_sets[0] = EnvParams(0.50, bottle.max_fric, 1.0, 1.0)
+
+        elif args.single_med_fric:
+            print("Manually forcing single planner to use MEDIUM friction")
+            plan_params_sets[0] = EnvParams(0.50, 0.08, 1.0, 1.0)
 
     # save all parameters used
     if not args.replay_results:
@@ -357,7 +360,8 @@ def main():
     planner = NaivePlanner(env=env, sim_mode=plan_type, sim_params_set=plan_params_sets,
                            dist_thresh=args.goal_thresh, eps=args.eps, da_rad=da_rad,
                            dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
-                           fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost)
+                           fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost,
+                           simulate_prev_trans=args.simulate_prev_trans)
 
     # Possibly specify a specific start-goal pair to run
     if args.start_goal != -1:
@@ -375,13 +379,26 @@ def main():
 
     # Possibly specify a specific exec_param to run
     if args.exec_param != -1:
+        print("Using exec_param %d: %s" % (args.exec_param, exec_params_set[args.exec_param]))
         exec_params_set = [exec_params_set[args.exec_param], ]
+    else:
+        if args.exec_low_fric:
+            exec_params_set = [EnvParams(0.50, bottle.min_fric, 0.33, 0.11)]
+            print("Executing with LOW friction: %s" % exec_params_set[0])
+        elif args.exec_high_fric:
+            exec_params_set = [EnvParams(0.50, bottle.max_fric, 0.33, 0.11)]
+            print("Executing with HIGH friction: %s" % exec_params_set[0])
+        elif args.exec_med_fric:
+            exec_params_set = [EnvParams(0.50, 0.08, 0.33, 0.11)]
+            print("Executing with MEDIUM friction: %s" % exec_params_set[0])
+        else:
+            print("Using default loaded execution params")
 
     for start_goal_idx in targets:
         print("Start goal idx: %d" % start_goal_idx, flush=True)
         res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
         (startb, goalb, start_joints) = start_goals[start_goal_idx]
-        goalb -= np.array([0.2, 0, 0])
+
         start_state = helpers.bottle_EE_to_state(
             bpos=startb, arm=arm, joints=start_joints)
         goal_state = helpers.bottle_EE_to_state(bpos=goalb, arm=arm)
@@ -389,15 +406,8 @@ def main():
         planner.goal = goal_state
 
         if args.use_replan and not args.replay_results:
-            if args.replan_exec_low_fric:
-                exec_params = EnvParams(0.50, 0.06, 0.33, 0.11)
-            elif args.replan_exec_high_fric:
-                exec_params = EnvParams(0.50, 0.14, 0.33, 0.11)
-            else:
-                exec_params = EnvParams(0.50, 0.10, 0.33, 0.11)
-
             piecewise_execution_replan_helper(planner, env,
-                                              exec_params=exec_params,
+                                              exec_params=exec_params_set[0],
                                               res_fname=res_fname,
                                               max_time_s=args.max_time)
         else:

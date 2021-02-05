@@ -16,11 +16,10 @@ def parse_arguments():
 
     # Replanning after execution
     parser.add_argument('--use_replan', action="store_true")
-    parser.add_argument('--replan_exec_low_fric', action="store_true")
-    parser.add_argument('--replan_exec_high_fric', action="store_true")
 
-    # Planner Agnostic
+    # Planner Agnostic  simulate_prev
     parser.add_argument('--use_ee_trans_cost', action="store", type=bool, default="true")
+    parser.add_argument('--simulate_prev_trans', action="store_true")
     parser.add_argument('--max_time', action="store", type=int, default="60",
                         help="Single planner planning time limit (sec), mulitplied by N for average planner.")
     parser.add_argument('--dx', action="store", type=float, default="0.1")
@@ -31,10 +30,16 @@ def parse_arguments():
     parser.add_argument('--eps', action="store", type=float, default="5")
     parser.add_argument('--start_goal', action="store", type=int, default="-1")
     parser.add_argument('--start_goal_range', action="store", type=str, default="")
-    parser.add_argument('--exec_param', action="store", type=int, default="-1")
+
     # Optional load planning params from a file
     parser.add_argument('--load_params', action="store_true")
     parser.add_argument('--params_path', action="store", type=str, default="")
+
+    # Optionally specify specific execution parameters
+    parser.add_argument('--exec_param', action="store", type=int, default="-1")
+    parser.add_argument('--exec_low_fric', action="store_true")
+    parser.add_argument('--exec_high_fric', action="store_true")
+    parser.add_argument('--exec_med_fric', action="store_true")
 
     # Avg Planner
     parser.add_argument('--fall_thresh', action="store", type=float, default="0.2")
@@ -48,6 +53,8 @@ def parse_arguments():
                         help="Single planner to use manually-specified low friction")
     parser.add_argument('--single_high_fric', action="store_true",
                         help="Single planner to use manually-specified high friction")
+    parser.add_argument('--single_med_fric', action="store_true",
+                        help="Single planner to use manually-specified medium friction")
 
     args = parser.parse_args()
 

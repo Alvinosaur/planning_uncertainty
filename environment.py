@@ -281,10 +281,10 @@ class Environment(object):
                 np.linalg.norm(
                     np.array(self.bottle.pos)[:2] - np.array(prev_bottle_pos)[:2]),
                 0.0, abs_tol=1e-05)
-            angle_diff = abs(self.bottle.calc_vert_angle(ori=prev_bottle_ori) -
-                             self.bottle.calc_vert_angle()) * 180 / math.pi
-            bottle_angle_stopped = angle_diff <= self.min_ang_rot
-            bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped and bottle_angle_stopped
+            # angle_diff = abs(self.bottle.calc_vert_angle(ori=prev_bottle_ori) -
+            #                  self.bottle.calc_vert_angle()) * 180 / math.pi
+            # bottle_angle_stopped = angle_diff <= self.min_ang_rot
+            bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped  # and bottle_angle_stopped
             prev_bottle_pos = self.bottle.pos
             prev_bottle_ori = self.bottle.ori
 

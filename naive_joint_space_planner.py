@@ -85,7 +85,7 @@ class Node(object):
 class NaivePlanner(object):
     def __init__(self, env, sim_mode, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
                  da_rad=15 * math.pi / 180.0, visualize=False, start=None, goal=None,
-                 fall_thresh=0.2, use_ee_trans_cost=True):
+                 fall_thresh=0.2, use_ee_trans_cost=True, simulate_prev_trans=False):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -109,6 +109,13 @@ class NaivePlanner(object):
         self.G = dict()
         self.use_EE = False
         self.guided_direction = True
+
+        # choose to simulate not only (s_t,a_t) but also (s_t-1, a_t-1)
+        # only useful for AVG planner which uses mode next state as the successor
+        # and this mode may not accurately reflect next state of some simulations
+        if simulate_prev_trans and sim_mode == SINGLE:
+            print("Trying to use simulate_prev_trans=True with SINGLE planner is useless, ignoring...")
+        self.simulate_prev_trans = simulate_prev_trans and (sim_mode != SINGLE)
 
         self.visualize = visualize
 
@@ -238,6 +245,7 @@ class NaivePlanner(object):
         goal_expanded = False
 
         while not goal_expanded and len(open_set) > 0:
+            # start_time = time.time()
             num_expansions += 1
 
             # get next state to expand
@@ -245,7 +253,7 @@ class NaivePlanner(object):
             state = n.state
             state_key = self.state_to_key(state)
 
-            if num_expansions > 1:
+            if self.simulate_prev_trans and num_expansions > 1:
                 prev_ai, prev_node = transitions[state_key]
                 prev_action = self.A.get_action(prev_ai)
                 prev_joints = self.joint_pose_from_state(prev_node.state)
@@ -376,6 +384,8 @@ class NaivePlanner(object):
                     # build directed graph
                     transitions[next_state_key] = (ai, n)
                     # print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
+
+            # print("time: %.3f" % (time.time() - start_time))
 
         print("States Expanded: %d, found goal: %d" %
               (num_expansions, goal_expanded))
