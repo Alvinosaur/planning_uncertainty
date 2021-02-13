@@ -7,7 +7,7 @@ def parse_arguments():
     # General
     parser.add_argument('--visualize', action="store_true")
     parser.add_argument('--replay_results', action="store_true")
-    parser.add_argument('--replay_dir', action="store", type=str, default="")
+    parser.add_argument('--replay_dir', action="store", type=str)
     parser.add_argument('--redirect_stdout', action="store_true")
 
     # Type of planner
@@ -28,8 +28,11 @@ def parse_arguments():
     parser.add_argument('--goal_thresh', action="store", type=float, default="0.1")
     parser.add_argument('--dtheta', action="store", type=int, default="8")
     parser.add_argument('--eps', action="store", type=float, default="5")
+
+    # Optionally specify specific start-goal pairs or even index of a solved path
     parser.add_argument('--start_goal', action="store", type=int, default="-1")
-    parser.add_argument('--start_goal_range', action="store", type=str, default="")
+    parser.add_argument('--start_goal_range', action="store", type=str)
+    parser.add_argument('--solved_index', action="store", type=int)
 
     # Optional load planning params from a file
     parser.add_argument('--load_params', action="store_true")
@@ -55,6 +58,11 @@ def parse_arguments():
                         help="Single planner to use manually-specified high friction")
     parser.add_argument('--single_med_fric', action="store_true",
                         help="Single planner to use manually-specified medium friction")
+
+    # Experimental
+    # possible options: always_N, always_1, far_N, close_N
+    parser.add_argument('--sim_type', action="store", type=str, default="always_N")
+    parser.add_argument('--sim_dist_thresh', action="store", type=float, default="0.18")
 
     args = parser.parse_args()
 

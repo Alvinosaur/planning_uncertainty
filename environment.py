@@ -72,8 +72,25 @@ class EnvParams(object):
         self.bottle_fric_prob = bottle_fric_prob
 
     def __repr__(self):
-        return "fill, fric, pfill, pfric: %.2f, %.2f, %.2f, %.2f" % (
+        return "fill, fric, pfill, pfric: %.3f, %.3f, %.2f, %.2f" % (
             self.bottle_fill, self.bottle_fric, self.bottle_fill_prob, self.bottle_fric_prob)
+
+    def __add__(self, other):
+        return EnvParams(bottle_fill=self.bottle_fill + other.bottle_fill,
+                         bottle_fric=self.bottle_fric + other.bottle_fric,
+                         bottle_fill_prob=self.bottle_fill_prob + other.bottle_fill_prob,
+                         bottle_fric_prob=self.bottle_fric_prob + other.bottle_fric_prob)
+
+    def __radd__(self, other):
+        if isinstance(other, int):
+            return self
+        return self + other
+
+    def __truediv__(self, other):
+        return EnvParams(bottle_fill=self.bottle_fill / other,
+                         bottle_fric=self.bottle_fric / other,
+                         bottle_fill_prob=self.bottle_fill_prob / other,
+                         bottle_fric_prob=self.bottle_fric_prob / other)
 
 
 class Environment(object):

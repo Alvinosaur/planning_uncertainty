@@ -89,12 +89,13 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
                         replay_results,
                         res_fname,
                         visualize,
-                        max_time_s):
+                        max_time_s,
+                        cur_bottle_ori=np.array([0, 0, 0, 1])):
     if not replay_results:
         start_time = time.time()
         try:
             with helpers.time_limit(max_time_s):
-                state_path, policy, node_path = planner.plan()
+                state_path, policy, node_path = planner.plan(bottle_ori=cur_bottle_ori)
 
             time_taken = time.time() - start_time
             print("time taken: %.3f" % time_taken, flush=True)
@@ -138,14 +139,14 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
 
 def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
-                                      exec_params: EnvParams, res_fname: str, max_time_s: int):
+                                      exec_params: EnvParams, res_fname: str, max_time_s: int,
+                                      cur_bottle_ori):
     is_success = False
     is_fallen = False
     plan_count = 0
     final_state_path = []
     final_policy = []
     final_node_path = []
-    cur_bottle_ori = [0, 0, 0, 1]
     executed_traj = None
 
     try:
@@ -189,7 +190,8 @@ def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
 def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
                                exec_params_set,
                                res_fname,
-                               max_time_s):
+                               max_time_s,
+                               cur_bottle_ori=np.array([0, 0, 0, 1])):
     orig_start = planner.start
     orig_goal = planner.goal
 
@@ -199,7 +201,8 @@ def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
         piecewise_execution_replan_helper(planner, env,
                                           exec_params=exec_params,
                                           res_fname=res_fname + "_exec_%d" % exec_i,
-                                          max_time_s=max_time_s)
+                                          max_time_s=max_time_s,
+                                          cur_bottle_ori=cur_bottle_ori)
 
 
 def gen_exec_params(env):
@@ -284,6 +287,12 @@ def main():
     # Load start-goal pairs to solve
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
+        # (startb, goalb, start_joints) = start_goals[6]
+        # startb -= np.array([0.0, 0.2, 0])
+        # start_goals[6] = (startb, goalb, start_joints)
+
+    # with open("filtered_start_goals.obj", "wb") as f:
+    #     pickle.dump(start_goals, f)
 
     # Load execution params (unused if args.replay_results False)
     params_path = "sim_params_set.obj"
@@ -296,6 +305,7 @@ def main():
     if args.load_params:
         plan_params_sets = default_params["plan_params_sets"]
         exec_params_set = default_params["exec_params_set"]
+        single_param = default_params["single_param"]
         if args.n_sims != len(plan_params_sets):
             raise Exception(
                 f"n_sims {args.n_sims} != len(plan_params_set) {len(plan_params_sets)}")
@@ -303,7 +313,7 @@ def main():
         print(f"Sampling {sample_strat} distribution")
         # unimodal high friction
         if sample_strat == HIGH_FRIC:
-            env.set_distribs(min_fric=0.10, max_fric=bottle.max_fric)
+            env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
             plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
 
         # bimodal low and high friction with mode being high friction
@@ -313,18 +323,18 @@ def main():
             # avoid knocking bottle over
             num_high_fric = int(args.n_sims * 3 / 4.)
             num_low_fric = args.n_sims - num_high_fric
-            env.set_distribs(min_fric=0.10, max_fric=bottle.max_fric)
+            env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
             plan_params_sets = env.gen_random_env_param_set(
                 num=num_high_fric)
 
             # Sample 1/4 from low friction distribution
-            env.set_distribs(min_fric=bottle.min_fric, max_fric=0.08)
+            env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
             plan_params_sets += env.gen_random_env_param_set(
                 num=num_low_fric)
 
         else:
             # unimodal at medium friction
-            env.set_distribs(min_fric=bottle.min_fric, max_fric=bottle.max_fric)
+            env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.high_fric_max)
             plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
 
         assert (len(plan_params_sets) == args.n_sims)
@@ -332,25 +342,51 @@ def main():
         # Execution evaluation parameters
         exec_params_set = gen_exec_params(env)
 
-    # Test if single planner using low and high friction produce different performance
-    if plan_type == SINGLE:
+        # Test if single planner using low and high friction produce different performance
         if args.single_low_fric:
             print("Manually forcing single planner to use LOW friction")
-            plan_params_sets[0] = EnvParams(0.50, bottle.min_fric, 1.0, 1.0)
+            env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
+            single_param = env.gen_random_env_param_set(num=1)
 
         elif args.single_high_fric:
             print("Manually forcing single planner to use HIGH friction")
-            plan_params_sets[0] = EnvParams(0.50, bottle.max_fric, 1.0, 1.0)
+            env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
+            single_param = env.gen_random_env_param_set(num=1)
 
         elif args.single_med_fric:
             print("Manually forcing single planner to use MEDIUM friction")
-            plan_params_sets[0] = EnvParams(0.50, 0.08, 1.0, 1.0)
+            env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
+            single_param = env.gen_random_env_param_set(num=1)
+
+        else:
+            single_param = None
+
+        # Possibly specify a specific exec_param to run
+        if args.exec_param != -1:
+            print("Using exec_param %d: %s" % (args.exec_param, exec_params_set[args.exec_param]))
+            exec_params_set = [exec_params_set[args.exec_param], ]
+        else:
+            if args.exec_low_fric:
+                env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
+                exec_params_set = env.gen_random_env_param_set(num=1)
+                print("Executing with LOW friction: %s" % exec_params_set[0])
+            elif args.exec_high_fric:
+                env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
+                exec_params_set = env.gen_random_env_param_set(num=1)
+                print("Executing with HIGH friction: %s" % exec_params_set[0])
+            elif args.exec_med_fric:
+                env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
+                exec_params_set = env.gen_random_env_param_set(num=1)
+                print("Executing with MEDIUM friction: %s" % exec_params_set[0])
+            else:
+                print("Using default loaded execution params")
 
     # save all parameters used
     if not args.replay_results:
         with open("%s/sim_params_set.obj" % planner_folder, "wb") as f:
             exec_plan_params = dict(exec_params_set=exec_params_set,
-                                    plan_params_sets=plan_params_sets)
+                                    plan_params_sets=plan_params_sets,
+                                    single_param=single_param)
             pickle.dump(exec_plan_params, f)
         with open(os.path.join(planner_folder, "args.json"), "w") as outfile:
             json.dump(argparse_dict, outfile, indent=4)
@@ -361,12 +397,17 @@ def main():
                            dist_thresh=args.goal_thresh, eps=args.eps, da_rad=da_rad,
                            dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
                            fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost,
-                           simulate_prev_trans=args.simulate_prev_trans)
+                           simulate_prev_trans=args.simulate_prev_trans, sim_type=args.sim_type,
+                           sim_dist_thresh=args.sim_dist_thresh, single_param=single_param)
+
+    print("plan_params_sets:")
+    for param in plan_params_sets:
+        print(param)
 
     # Possibly specify a specific start-goal pair to run
     if args.start_goal != -1:
         targets = [args.start_goal, ]
-    elif args.start_goal_range != "":
+    elif args.start_goal_range is not None:
         try:
             left, right = re.findall("(\d+)-(\d+)", args.start_goal_range)[0]
             targets = list(range(int(left), int(right)))
@@ -377,27 +418,27 @@ def main():
     else:
         targets = list(range(0, 11))
 
-    # Possibly specify a specific exec_param to run
-    if args.exec_param != -1:
-        print("Using exec_param %d: %s" % (args.exec_param, exec_params_set[args.exec_param]))
-        exec_params_set = [exec_params_set[args.exec_param], ]
-    else:
-        if args.exec_low_fric:
-            exec_params_set = [EnvParams(0.50, bottle.min_fric, 0.33, 0.11)]
-            print("Executing with LOW friction: %s" % exec_params_set[0])
-        elif args.exec_high_fric:
-            exec_params_set = [EnvParams(0.50, bottle.max_fric, 0.33, 0.11)]
-            print("Executing with HIGH friction: %s" % exec_params_set[0])
-        elif args.exec_med_fric:
-            exec_params_set = [EnvParams(0.50, 0.08, 0.33, 0.11)]
-            print("Executing with MEDIUM friction: %s" % exec_params_set[0])
-        else:
-            print("Using default loaded execution params")
-
     for start_goal_idx in targets:
         print("Start goal idx: %d" % start_goal_idx, flush=True)
-        res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
-        (startb, goalb, start_joints) = start_goals[start_goal_idx]
+
+        if args.solved_index is not None:
+            assert args.replay_dir is not None
+            res_fname = "%s/results_%d" % (args.replay_dir, start_goal_idx)
+            results = np.load("%s.npz" % res_fname, allow_pickle=True)
+            node_path = results["node_path"]
+            (_, goalb, _) = start_goals[start_goal_idx]
+            start = node_path[args.solved_index]
+            startb = planner.bottle_pos_from_state(start.state)
+            start_joints = planner.joint_pose_from_state(start.state)
+            start_bottle_ori = start.bottle_ori
+
+        else:
+            res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
+            (startb, goalb, start_joints) = start_goals[start_goal_idx]
+            start_bottle_ori = np.array([0, 0, 0, 1])
+
+        print(goalb)
+        # (0.42,0.40,0.13)
 
         start_state = helpers.bottle_EE_to_state(
             bpos=startb, arm=arm, joints=start_joints)
@@ -409,14 +450,16 @@ def main():
             piecewise_execution_replan_helper(planner, env,
                                               exec_params=exec_params_set[0],
                                               res_fname=res_fname,
-                                              max_time_s=args.max_time)
+                                              max_time_s=args.max_time,
+                                              cur_bottle_ori=start_bottle_ori)
         else:
             piecewise_execution(planner, env,
                                 exec_params_set=exec_params_set,
                                 replay_results=args.replay_results,
                                 res_fname=res_fname,
                                 visualize=args.visualize,
-                                max_time_s=args.max_time)
+                                max_time_s=args.max_time,
+                                cur_bottle_ori=start_bottle_ori)
 
 
 if __name__ == "__main__":

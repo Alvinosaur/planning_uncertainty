@@ -54,17 +54,29 @@ while state != start:
 
 SINGLE = "single"
 AVG = "avg"
+ALWAYS_N = 0
+ALWAYS_1 = 1
+FAR_N = 2
+CLOSE_N = 3
+SIM_TYPE_TO_ID = {
+    "always_N": ALWAYS_N,
+    "always_1": ALWAYS_1,
+    "far_N": FAR_N,
+    "close_N": CLOSE_N
+}
 
 
 class Node(object):
     def __init__(self, cost, state, nearest_arm_pos_i,
-                 nearest_arm_pos, ee_pos, fall_history=[], fall_prob=-1,
-                 bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0):
+                 nearest_arm_pos, ee_pos, fall_history=[], mode_sim_param=None, fall_prob=-1,
+                 bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0, bottle_goal_dist=np.inf):
         self.cost = cost
         self.fall_prob = fall_prob
         self.fall_history = fall_history
+        self.mode_sim_param = mode_sim_param
         self.g = g
         self.h = h
+        self.bottle_goal_dist = bottle_goal_dist
         self.state = state
         self.bottle_ori = bottle_ori
         self.nearest_arm_pos_i = nearest_arm_pos_i
@@ -75,21 +87,24 @@ class Node(object):
         return self.cost < other.cost
 
     def __repr__(self):
-        s = "C(%.2f) | h(%.3f): Bpos(" % (self.cost, self.h)
+        s = "C(%.2f) | h(%.3f) | d(%.3f): Bpos(" % (self.cost, self.h, self.bottle_goal_dist)
         s += ",".join(["%.2f" % v for v in self.state[:3]])
         s += "), fall history:"
         s += ",".join(["%d" % v for v in self.fall_history])
+        s += " | %s" % self.mode_sim_param
         return s
 
 
 class NaivePlanner(object):
     def __init__(self, env, sim_mode, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
                  da_rad=15 * math.pi / 180.0, visualize=False, start=None, goal=None,
-                 fall_thresh=0.2, use_ee_trans_cost=True, simulate_prev_trans=False):
+                 fall_thresh=0.2, use_ee_trans_cost=True, simulate_prev_trans=False, sim_type="always_N",
+                 sim_dist_thresh=0.18, single_param=None):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
         self.env = env
+        self.dist_thresh = dist_thresh
         self.sq_dist_thresh = dist_thresh ** 2
         self.eps = eps
         self.dx, self.dy, self.dz = dx, dy, dz
@@ -121,6 +136,7 @@ class NaivePlanner(object):
 
         # random samples of environmental parameters
         self.sim_params_set = sim_params_set
+        self.single_param = single_param  # when SINGLE mode or when running 1 sim in AVG mode
 
         # overall probability of a given simulation is product of probabilities
         # of random env params
@@ -129,6 +145,11 @@ class NaivePlanner(object):
 
         # safety threshold for prob(bottle fall) to deem invalid transitions
         self.fall_thresh = fall_thresh
+
+        # Optimizations for deciding when to run N vs 1 simulation
+        assert sim_type in SIM_TYPE_TO_ID, "{} not a valid sim_type!".format(sim_type)
+        self.sim_type = SIM_TYPE_TO_ID[sim_type]
+        self.sim_dist_thresh = sim_dist_thresh
 
         # method of simulating an action
         self.sim_mode = sim_mode
@@ -150,7 +171,7 @@ class NaivePlanner(object):
         dist = ((bx - eex) ** 2 + (by - eey) ** 2) ** 0.5
         print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
 
-    def avg_results(self, results):
+    def avg_results(self, results, sim_params_set):
         """
         Randomly sample internal(unobservable to agent) bottle parameters for
         each iteration to calculate expected fall rate.
@@ -168,6 +189,7 @@ class NaivePlanner(object):
         # draw random param from set to determine next state and reward
 
         bpos_bins = dict()  # state_key -> [state, bori, count]
+        sim_params_bins = dict()
 
         # NOTE: simulation automatically terminates if the arm doesn't touch
         # bottle since no need to simulate different bottle parameters
@@ -176,6 +198,8 @@ class NaivePlanner(object):
         fall_history = []
         for i in range(num_iters):
             is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
+            sim_param = sim_params_set[i]
+
             bpos_disc = np.rint(bpos / self.dpos)
             rot_mat = Quaternion(bori).rotation_matrix
             z_axis = rot_mat @ np.array([0, 0, 1.0])
@@ -185,8 +209,10 @@ class NaivePlanner(object):
 
             if key in bpos_bins:
                 bpos_bins[key][-1] += 1
+                sim_params_bins[key].append(sim_param)
             else:
                 bpos_bins[key] = [bpos, bori, next_joint_pos, 1]
+                sim_params_bins[key] = [sim_param]
 
             # weighted sum of fall counts: sum(pi*xi) / sum(pi)
             fall_history.append(is_fallen)
@@ -199,10 +225,12 @@ class NaivePlanner(object):
         # find mode of next state
         max_key = max(bpos_bins, key=lambda k: bpos_bins[k][-1])
         [bpos, bori, next_joint_pos, count] = bpos_bins[max_key]
+        # mode_sim_param = sum(sim_params_bins[max_key]) / len(sim_params_bins[max_key])
+        mode_sim_param = ['%.3f' % param.bottle_fric for param in sim_params_bins[max_key]]
         # print(bpos_bins[max_key][-1])
         # print(self.state_to_str(bpos), self.state_to_str(bori))
 
-        return fall_proportion, fall_history, bpos, bori, next_joint_pos
+        return fall_proportion, fall_history, bpos, bori, next_joint_pos, mode_sim_param
 
     def plan(self, bottle_ori=np.array([0, 0, 0, 1])):
         # initialize open set with start and G values
@@ -278,7 +306,7 @@ class NaivePlanner(object):
             closed_set.add(state_key)
 
             # check if found goal, if so loop will terminate in next iteration
-            if self.reached_goal(state):
+            if self.reached_goal_node(n):
                 goal_expanded = True
                 self.goal = state
 
@@ -310,20 +338,29 @@ class NaivePlanner(object):
                      next_bottle_ori, next_joint_pose) = self.sim_func(
                         action=action, state=cur_state_tuple,
                         prev_state=prev_state_tuple, prev_action=prev_action,
-                        sim_params=self.sim_params_set[0])
+                        sim_params=self.single_param)
+
+                    mode_sim_param = self.single_param
                     invalid = is_fallen
                     fall_history = [is_fallen]
                     fall_prob = 1 if is_fallen else 0
 
                 else:
+                    if (self.sim_type == ALWAYS_N or
+                            (self.sim_type == FAR_N and n.bottle_goal_dist > self.sim_dist_thresh) or
+                            (self.sim_type == CLOSE_N and n.bottle_goal_dist <= self.sim_dist_thresh)):
+                        sim_params_set = self.sim_params_set
+                    else:
+                        sim_params_set = self.single_param
+
                     results = self.sim_func(
                         action=action, state=cur_state_tuple,
                         prev_state=prev_state_tuple, prev_action=prev_action,
-                        sim_params_set=self.sim_params_set)
+                        sim_params_set=sim_params_set)
 
                     (fall_prob, fall_history, next_bottle_pos,
-                     next_bottle_ori, next_joint_pose) = (
-                         self.process_multiple_sim_results(results))
+                     next_bottle_ori, next_joint_pose, mode_sim_param) = (
+                        self.process_multiple_sim_results(results, sim_params_set))
                     invalid = fall_prob > self.fall_thresh
                     # print(invalid, fall_prob)
 
@@ -353,15 +390,9 @@ class NaivePlanner(object):
 
                 # Quick FIX: use EE for transition costs so set nn_joint to EE
                 # still true b/c midpoints + joints, so last item is still last joint (EE)
-
-                h = self.heuristic(next_state, arm_bottle_dist)
+                bottle_goal_dist, arm_goal_dist = self.dist_to_goal(next_state, nn_joint_pos)
+                h = self.heuristic(bottle_goal_dist, arm_bottle_dist, arm_goal_dist)
                 new_G = cur_cost + trans_cost
-
-                # del_h = self.heuristic(next_state, arm_bottle_dist) - n.h
-                # print("del_g, del_h, eps*del_h: %.3f, %.3f, %.3f" % (
-                #     trans_cost,
-                #     del_h,
-                #     self.eps * del_h))
 
                 # if state not expanded or found better path to next_state
                 if next_state_key not in self.G or (
@@ -374,7 +405,8 @@ class NaivePlanner(object):
                         cost=overall_cost,
                         fall_prob=fall_prob,
                         fall_history=fall_history,
-                        g=new_G, h=h,
+                        mode_sim_param=mode_sim_param,
+                        g=new_G, h=h, bottle_goal_dist=bottle_goal_dist,
                         state=next_state,
                         nearest_arm_pos_i=nn_joint_i,
                         nearest_arm_pos=nn_joint_pos,
@@ -426,6 +458,13 @@ class NaivePlanner(object):
         new_bpos[:2] -= dist_offset * vec_cur_to_goal
         return new_bpos
 
+    def dist_to_goal(self, state, nn_joint_pos):
+        bottle_pos = np.array(self.bottle_pos_from_state(state))
+        goal_bottle_pos = np.array(self.bottle_pos_from_state(self.goal))
+        dist_bottle_to_goal = np.linalg.norm(bottle_pos[:2] - goal_bottle_pos[:2])
+        dist_arm_to_goal = np.linalg.norm(nn_joint_pos[:2] - goal_bottle_pos[:2])
+        return dist_bottle_to_goal, dist_arm_to_goal
+
     def dist_arm_to_bottle(self, state, positions):
         bottle_pos = self.bottle_pos_from_state(state)
         bottle_pos = bottle_pos + self.env.bottle.center_of_mass
@@ -468,11 +507,12 @@ class NaivePlanner(object):
             dist_traveled = np.linalg.norm(prev_nearest_j - new_nearest_j)
         return dist_traveled
 
-    def heuristic(self, state, dist_arm_to_bottle):
-        bottle_pos = np.array(self.bottle_pos_from_state(state))
-        goal_bottle_pos = np.array(self.bottle_pos_from_state(self.goal))
-        dist_to_goal = np.linalg.norm(bottle_pos[:2] - goal_bottle_pos[:2])
-        return dist_to_goal + dist_arm_to_bottle
+    def heuristic(self, dist_to_goal, dist_arm_to_bottle, arm_goal_dist):
+        # print(dist_to_goal, 0.6 * dist_arm_to_bottle, 0.5 * arm_goal_dist)
+        return dist_to_goal + dist_arm_to_bottle  # + 0.8 * arm_goal_dist
+
+    def reached_goal_node(self, node: Node):
+        return node.bottle_goal_dist < self.dist_thresh
 
     def reached_goal(self, state):
         x, y, _ = self.bottle_pos_from_state(state)
@@ -486,7 +526,7 @@ class NaivePlanner(object):
         joints = self.joint_pose_from_state(state)
         joints_i = np.rint(joints / self.da)
         # tuple of ints as unique id
-        return (tuple(pos_i), tuple(joints_i))
+        return tuple(pos_i), tuple(joints_i)
 
     def key_to_state(self, key):
         (pos_i, joints_i) = key
