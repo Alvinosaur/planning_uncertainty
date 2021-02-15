@@ -80,7 +80,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         if is_fallen and break_on_fail:
             break
 
-    is_success = planner.reached_goal(cur_bottle_pos)
+    is_success = planner.reached_goal(cur_bottle_pos) and not is_fallen
     return is_fallen, is_success, executed_traj, cur_bottle_ori
 
 
@@ -209,14 +209,14 @@ def gen_exec_params(env):
     """
     Uniform distribution across low, medium ,and high friction
     """
-    env.set_distribs(min_fric=0.14, max_fric=0.16)
+    env.set_distribs(min_fric=env.bottle.high_fric_min, max_fric=env.bottle.high_fric_max)
     exec_params_set = env.gen_random_env_param_set(num=5)
 
     # Sample 1/4 from low friction distribution
-    env.set_distribs(min_fric=0.05, max_fric=0.08)
+    env.set_distribs(min_fric=env.bottle.low_fric_min, max_fric=env.bottle.low_fric_max)
     exec_params_set += env.gen_random_env_param_set(num=5)
 
-    env.set_distribs(min_fric=0.09, max_fric=0.13)
+    env.set_distribs(min_fric=env.bottle.low_fric_max, max_fric=env.bottle.high_fric_min)
     exec_params_set += env.gen_random_env_param_set(num=5)
 
     return exec_params_set
@@ -287,9 +287,10 @@ def main():
     # Load start-goal pairs to solve
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
-        # (startb, goalb, start_joints) = start_goals[6]
-        # startb -= np.array([0.0, 0.2, 0])
-        # start_goals[6] = (startb, goalb, start_joints)
+        # (startb, goalb, start_joints) = start_goals[20]
+        # goalb += np.array([0.3, 0.1, 0])
+        # start_joints[1] -= math.pi / 6
+        # start_goals[11] = (startb, goalb, start_joints)
 
     # with open("filtered_start_goals.obj", "wb") as f:
     #     pickle.dump(start_goals, f)
@@ -346,17 +347,17 @@ def main():
         if args.single_low_fric:
             print("Manually forcing single planner to use LOW friction")
             env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
-            single_param = env.gen_random_env_param_set(num=1)
+            single_param = env.gen_random_env_param_set(num=1)[0]
 
         elif args.single_high_fric:
             print("Manually forcing single planner to use HIGH friction")
             env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
-            single_param = env.gen_random_env_param_set(num=1)
+            single_param = env.gen_random_env_param_set(num=1)[0]
 
         elif args.single_med_fric:
             print("Manually forcing single planner to use MEDIUM friction")
             env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
-            single_param = env.gen_random_env_param_set(num=1)
+            single_param = env.gen_random_env_param_set(num=1)[0]
 
         else:
             single_param = None
@@ -410,13 +411,24 @@ def main():
     elif args.start_goal_range is not None:
         try:
             left, right = re.findall("(\d+)-(\d+)", args.start_goal_range)[0]
-            targets = list(range(int(left), int(right)))
+            targets = list(range(int(left), int(right)+1))
         except:
             print("Failed to parse start_goal_range string: %s, requires format (\d+)-(\d+)" %
                   args.start_goal_range)
             exit(-1)
     else:
         targets = list(range(0, 11))
+
+    # exec_params_set = gen_exec_params(env)
+    # with open("%s/sim_params_set.obj" % planner_folder, "wb") as f:
+    #     exec_plan_params = dict(exec_params_set=exec_params_set,
+    #                             plan_params_sets=plan_params_sets,
+    #                             single_param=single_param)
+    #     pickle.dump(exec_plan_params, f)
+
+    print("exec_params_sets:")
+    for param in exec_params_set:
+        print(param)
 
     for start_goal_idx in targets:
         print("Start goal idx: %d" % start_goal_idx, flush=True)

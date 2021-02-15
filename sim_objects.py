@@ -37,10 +37,10 @@ class Bottle:
         self.height = height  # m
         self.max_volume = math.pi * self.radius ** 2 * self.height  # m^3
         self.lat_fric = fric
-        self.min_fric = 0.05
-        self.max_fric = 0.14
+        self.min_fric = 0.03
+        self.max_fric = 0.13
         self.low_fric_min = self.min_fric
-        self.low_fric_max = 0.08
+        self.low_fric_max = 0.06
         self.high_fric_min = 0.12
         self.high_fric_max = self.max_fric
         self.min_fill = 0.2

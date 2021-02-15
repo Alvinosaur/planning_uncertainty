@@ -87,10 +87,11 @@ class Node(object):
         return self.cost < other.cost
 
     def __repr__(self):
-        s = "C(%.2f) | h(%.3f) | d(%.3f): Bpos(" % (self.cost, self.h, self.bottle_goal_dist)
-        s += ",".join(["%.2f" % v for v in self.state[:3]])
-        s += "), fall history:"
-        s += ",".join(["%d" % v for v in self.fall_history])
+        s = "C(%.2f) | h(%.3f) | d(%.3f) | " % (self.cost, self.h, self.bottle_goal_dist)
+        s += "Bpos(" + ",".join(["%.2f" % v for v in self.state[:3]]) + "), "
+        s += "Joints(" + ",".join(["%.3f" % v for v in self.state[3:]]) + "), "
+        # s += "), fall history:"
+        # s += ",".join(["%d" % v for v in self.fall_history])
         s += " | %s" % self.mode_sim_param
         return s
 
@@ -112,6 +113,7 @@ class NaivePlanner(object):
         self.dpos = np.array([dx, dy, dz])
 
         # Costs and weights
+        self.dist_cost_weights = np.array([3, 3, 1])  # x, y, z
         self.use_ee_trans_cost = use_ee_trans_cost
         self.time_cost_weight = 0.0
         # self.time_cost_weight = 0.025  # chosen since avg EE dist moved cost is 0.05
@@ -486,8 +488,7 @@ class NaivePlanner(object):
         min_i = 0
         min_pos = None
         for i, pos in enumerate(positions):
-            horiz_scale = np.array([2, 2, 1])
-            diff = horiz_scale * (np.array(pos) - bottle_pos)
+            diff = self.dist_cost_weights * (np.array(pos) - bottle_pos)
             dist = np.linalg.norm(diff)
             if min_dist is None or dist < min_dist:
                 min_dist = dist
