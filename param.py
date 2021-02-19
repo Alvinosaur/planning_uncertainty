@@ -25,9 +25,9 @@ def parse_arguments():
     parser.add_argument('--dx', action="store", type=float, default="0.1")
     parser.add_argument('--dy', action="store", type=float, default="0.1")
     parser.add_argument('--dz', action="store", type=float, default="0.1")
-    parser.add_argument('--goal_thresh', action="store", type=float, default="0.1")
+    parser.add_argument('--goal_thresh', action="store", type=float, default="0.2")
     parser.add_argument('--dtheta', action="store", type=int, default="8")
-    parser.add_argument('--eps', action="store", type=float, default="5")
+    parser.add_argument('--eps', action="store", type=float, default="7")
 
     # Optionally specify specific start-goal pairs or even index of a solved path
     parser.add_argument('--start_goal', action="store", type=int, default="-1")
@@ -45,7 +45,7 @@ def parse_arguments():
     parser.add_argument('--exec_med_fric', action="store_true")
 
     # Avg Planner
-    parser.add_argument('--fall_thresh', action="store", type=float, default="0.2")
+    parser.add_argument('--fall_thresh', action="store", type=float, default="0")
     parser.add_argument('--n_sims', action="store", type=int, default="10")
     # Avg Planner Sampling Strategy
     parser.add_argument('--bimodal', action="store_true")
@@ -62,7 +62,7 @@ def parse_arguments():
     # Experimental
     # possible options: always_N, always_1, far_N, close_N
     parser.add_argument('--sim_type', action="store", type=str, default="always_N")
-    parser.add_argument('--sim_dist_thresh', action="store", type=float, default="0.18")
+    parser.add_argument('--sim_dist_thresh', action="store", type=float, default="0.25")
 
     args = parser.parse_args()
 

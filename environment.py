@@ -13,7 +13,7 @@ from sim_objects import Arm, Bottle
 
 SimResults = collections.namedtuple(
     'SimResults', ['is_fallen', 'is_collision',
-                   'bottle_pos', 'bottle_ori', 'joint_pose'])
+                   'bottle_pos', 'bottle_ori', 'joint_pose', 'z_rot_ang'])
 StateTuple = collections.namedtuple('StateTuple', ['bottle_pos', 'bottle_ori', 'joints'])
 
 
@@ -127,7 +127,8 @@ class Environment(object):
 
         # tolerance for terminating simulation
         self.min_ang_rot = 0.8  # deg / SIM_VIZ_FREQ
-        self.fall_ang_thresh = 20 * math.pi / 180.0
+        self.fall_ang_thresh = 30 * math.pi / 180.0
+        self.no_movement_thresh = 3e-3
 
     def set_distribs(self, min_fric=None, max_fric=None, min_fill=None, max_fill=None):
         if min_fric is None:
@@ -208,7 +209,7 @@ class Environment(object):
             bottle_ori = state.bottle_ori
 
         return self.simulate_plan(joint_traj=joint_traj,
-                                  bottle_pos=bottle_pos, bottle_ori=bottle_ori,
+                                  start_bottle_pos=bottle_pos, start_bottle_ori=bottle_ori,
                                   sim_params=sim_params)
 
     def reset(self):
@@ -226,7 +227,7 @@ class Environment(object):
                                     force=self.arm.force,
                                     positionGain=self.arm.position_gain)
 
-    def simulate_plan(self, joint_traj, bottle_pos, bottle_ori, sim_params: EnvParams) -> SimResults:
+    def simulate_plan(self, joint_traj, start_bottle_pos, start_bottle_ori, sim_params: EnvParams) -> SimResults:
         """Run simulation with given joint-space trajectory. Does not reset arm
         joint angles after simulation is done, so that value can be guaranteed to be untouched.
 
@@ -245,12 +246,12 @@ class Environment(object):
         # create new bottle object with parameters set beforehand
         self.bottle.set_fill_proportion(sim_params.bottle_fill)
         self.bottle.set_fric(sim_params.bottle_fric)
-        if bottle_pos is not None:
-            self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
-            prev_bottle_pos = bottle_pos
-            prev_bottle_ori = bottle_ori
+        if start_bottle_pos is not None:
+            self.bottle.create_sim_bottle(start_bottle_pos, ori=start_bottle_ori)
+            prev_bottle_pos = start_bottle_pos
+            prev_bottle_ori = start_bottle_ori
         else:
-            self.bottle.create_sim_bottle(ori=bottle_ori)
+            self.bottle.create_sim_bottle(ori=start_bottle_ori)
             prev_bottle_pos = self.bottle.start_pos
             prev_bottle_ori = self.bottle.start_ori
         bottle_stopped = False
@@ -259,7 +260,7 @@ class Environment(object):
         iter = 0
         traj_len = joint_traj.shape[0]
 
-        while iter < traj_len or (iter < self.max_iters and not bottle_stopped):
+        while iter < traj_len:
             # set target joint pose
             next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
             self.command_new_pose(next_joint_pose)
@@ -309,15 +310,16 @@ class Environment(object):
 
         # generate cost and final position
         self.bottle.update_pose()
-        is_fallen = self.check_bottle_fallen()
+        is_fallen, z_rot_ang = self.check_bottle_fallen(ori=self.bottle.ori)
+        no_movement = np.linalg.norm(start_bottle_pos - self.bottle.pos) < self.no_movement_thresh
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
 
         # , executed_traj
-        return SimResults(is_fallen=is_fallen, is_collision=is_collision,
+        return SimResults(is_fallen=is_fallen, is_collision=is_collision and not no_movement,
                           bottle_pos=self.bottle.pos, bottle_ori=self.bottle.ori,
-                          joint_pose=self.arm.joint_pose)
+                          joint_pose=self.arm.joint_pose, z_rot_ang=z_rot_ang)
 
     def simulate_plan_online(self, init_joints, policy, bottle_pos, bottle_ori, sim_params: EnvParams):
         """Run simulation with given joint-space trajectory. Does not reset arm
@@ -368,7 +370,7 @@ class Environment(object):
 
         # generate cost and final position
         self.bottle.update_pose()
-        is_fallen = self.check_bottle_fallen()
+        is_fallen, z_rot_ang = self.check_bottle_fallen(ori=self.bottle.ori)
 
         # remove bottle object, can't just reset pos since need to change params each iter
         p.removeBody(self.bottle.bottle_id)
@@ -376,9 +378,9 @@ class Environment(object):
         # , executed_traj
         return is_fallen, True, self.bottle.pos, self.bottle.ori, self.arm.joint_pose, executed_traj
 
-    def check_bottle_fallen(self):
-        angle = self.bottle.calc_vert_angle()
-        return abs(angle) > self.fall_ang_thresh
+    def check_bottle_fallen(self, ori):
+        angle = self.bottle.calc_vert_angle(ori)
+        return abs(angle) > self.fall_ang_thresh, angle
 
     def gen_random_env_param_set(self, num=1):
         rand_fills, rand_fill_probs = self.get_random_sample_prob(

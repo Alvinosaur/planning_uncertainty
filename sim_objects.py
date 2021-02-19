@@ -118,15 +118,13 @@ class Bottle:
             lateralFriction=self.lat_fric
         )
 
-    def calc_vert_angle(self, ori=None):
-        self.update_pose()
-        if ori is None:
-            ori = self.ori
+    @staticmethod
+    def calc_vert_angle(ori):
         z_axis = np.array([0, 0, 1])
         rot_mat = R.from_quat(ori).as_matrix()
         new_z_axis = rot_mat @ z_axis
-        angle = math.acos(z_axis @ new_z_axis /
-                          (np.linalg.norm(z_axis) * np.linalg.norm(new_z_axis)))
+        # norm(z_axis) = 1 so don't include
+        angle = math.acos(z_axis @ new_z_axis / np.linalg.norm(new_z_axis))
         # when z-axis rotation is 90deg (upright)
         return angle
 

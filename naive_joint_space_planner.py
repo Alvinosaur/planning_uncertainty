@@ -52,6 +52,8 @@ while state != start:
     state = prev
 """
 
+DEG2RAD = math.pi / 180.0
+RAD2DEG = 1 / DEG2RAD
 SINGLE = "single"
 AVG = "avg"
 ALWAYS_N = 0
@@ -69,7 +71,7 @@ SIM_TYPE_TO_ID = {
 class Node(object):
     def __init__(self, cost, state, nearest_arm_pos_i,
                  nearest_arm_pos, ee_pos, fall_history=[], mode_sim_param=None, fall_prob=-1,
-                 bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0, bottle_goal_dist=np.inf):
+                 bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0, bottle_goal_dist=np.inf, arm_bottle_dist=np.inf):
         self.cost = cost
         self.fall_prob = fall_prob
         self.fall_history = fall_history
@@ -77,6 +79,7 @@ class Node(object):
         self.g = g
         self.h = h
         self.bottle_goal_dist = bottle_goal_dist
+        self.arm_bottle_dist = arm_bottle_dist
         self.state = state
         self.bottle_ori = bottle_ori
         self.nearest_arm_pos_i = nearest_arm_pos_i
@@ -89,6 +92,7 @@ class Node(object):
     def __repr__(self):
         s = "C(%.2f) | h(%.3f) | d(%.3f) | " % (self.cost, self.h, self.bottle_goal_dist)
         s += "Bpos(" + ",".join(["%.2f" % v for v in self.state[:3]]) + "), "
+        s += "Bang(" + "%.1f" % (Bottle.calc_vert_angle(self.bottle_ori) * RAD2DEG) + "), "
         s += "Joints(" + ",".join(["%.3f" % v for v in self.state[3:]]) + "), "
         # s += "), fall history:"
         # s += ",".join(["%d" % v for v in self.fall_history])
@@ -98,7 +102,7 @@ class Node(object):
 
 class NaivePlanner(object):
     def __init__(self, env, sim_mode, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
-                 da_rad=15 * math.pi / 180.0, visualize=False, start=None, goal=None,
+                 da_rad=15 * DEG2RAD, visualize=False, start=None, goal=None,
                  fall_thresh=0.2, use_ee_trans_cost=True, simulate_prev_trans=False, sim_type="always_N",
                  sim_dist_thresh=0.18, single_param=None):
         # state = [x,y,z,q1,q2...,q7]
@@ -113,9 +117,11 @@ class NaivePlanner(object):
         self.dpos = np.array([dx, dy, dz])
 
         # Costs and weights
-        self.dist_cost_weights = np.array([3, 3, 1])  # x, y, z
+        self.dist_cost_weights = np.array([3, 3, 2])  # x, y, z
         self.use_ee_trans_cost = use_ee_trans_cost
-        self.time_cost_weight = 0.0
+        self.pos_var_w = 30
+        self.ang_var_w = 30
+        self.move_cost_w = 0.01
         # self.time_cost_weight = 0.025  # chosen since avg EE dist moved cost is 0.05
         # and time_cost_weight at most will be scaled by 2
 
@@ -188,8 +194,11 @@ class NaivePlanner(object):
         avg_fall_prob = 0
         fall_prob_norm = 0
 
-        # draw random param from set to determine next state and reward
+        # calculate variance in next state
+        all_bpos = []
+        all_bang = []
 
+        # draw random param from set to determine next state and reward
         bpos_bins = dict()  # state_key -> [state, bori, count]
         sim_params_bins = dict()
 
@@ -199,14 +208,11 @@ class NaivePlanner(object):
         num_iters = len(results)
         fall_history = []
         for i in range(num_iters):
-            is_fallen, is_collision, bpos, bori, next_joint_pos = results[i]
+            is_fallen, is_collision, bpos, bori, next_joint_pos, z_rot_ang = results[i]
             sim_param = sim_params_set[i]
 
             bpos_disc = np.rint(bpos / self.dpos)
-            rot_mat = Quaternion(bori).rotation_matrix
-            z_axis = rot_mat @ np.array([0, 0, 1.0])
-            rot_angle = np.arccos(z_axis @ np.array([0, 0, 1.0]))
-            rot_angle_disc = round(rot_angle / self.da)
+            rot_angle_disc = round(z_rot_ang / self.da)
             key = (tuple(bpos_disc), rot_angle_disc)
 
             if key in bpos_bins:
@@ -218,8 +224,12 @@ class NaivePlanner(object):
 
             # weighted sum of fall counts: sum(pi*xi) / sum(pi)
             fall_history.append(is_fallen)
-            avg_fall_prob += is_fallen * self.param_probs[i]
-            fall_prob_norm += self.param_probs[i]
+            avg_fall_prob += is_fallen  # self.param_probs[i]
+            fall_prob_norm += 1
+            # fall_prob_norm += self.param_probs[i]
+
+            all_bpos.append(bpos)
+            all_bang.append(z_rot_ang)
 
         # normalize by sum of weights (not all but only up to num_iters)
         fall_proportion = avg_fall_prob / fall_prob_norm
@@ -232,7 +242,12 @@ class NaivePlanner(object):
         # print(bpos_bins[max_key][-1])
         # print(self.state_to_str(bpos), self.state_to_str(bori))
 
-        return fall_proportion, fall_history, bpos, bori, next_joint_pos, mode_sim_param
+        # calculate variance
+        pos_variance = np.sum(np.var(all_bpos, axis=0))  # sum of variance of each dimension (x, y, z)
+        z_ang_variance = np.var(all_bang)
+        z_ang_mean = np.mean(all_bang)
+
+        return fall_proportion, pos_variance, z_ang_variance, z_ang_mean, fall_history, bpos, bori, next_joint_pos, mode_sim_param
 
     def plan(self, bottle_ori=np.array([0, 0, 0, 1])):
         # initialize open set with start and G values
@@ -346,6 +361,8 @@ class NaivePlanner(object):
                     invalid = is_fallen
                     fall_history = [is_fallen]
                     fall_prob = 1 if is_fallen else 0
+                    pos_variance = 0
+                    z_ang_variance = 0
 
                 else:
                     if (self.sim_type == ALWAYS_N or
@@ -360,7 +377,7 @@ class NaivePlanner(object):
                         prev_state=prev_state_tuple, prev_action=prev_action,
                         sim_params_set=sim_params_set)
 
-                    (fall_prob, fall_history, next_bottle_pos,
+                    (fall_prob, pos_variance, z_ang_variance, z_ang_mean, fall_history, next_bottle_pos,
                      next_bottle_ori, next_joint_pose, mode_sim_param) = (
                         self.process_multiple_sim_results(results, sim_params_set))
                     invalid = fall_prob > self.fall_thresh
@@ -377,9 +394,14 @@ class NaivePlanner(object):
 
                 new_arm_positions = self.env.arm.get_joint_link_positions(
                     next_joint_pose)
-                trans_cost = (self.calc_trans_cost(n, new_arm_positions) +
-                              1 * fall_prob +
-                              self.time_cost_weight * self.A.get_action_time_cost(action))
+
+                move_cost = self.calc_move_cost(n, new_arm_positions)
+                trans_cost = self.calc_trans_cost(move_cost=move_cost,
+                                                  fall_prob=fall_prob,
+                                                  pos_variance=pos_variance,
+                                                  z_ang_variance=z_ang_variance)
+                trans_cost += z_ang_mean
+                # self.time_cost_weight * self.A.get_action_time_cost(action))
 
                 # build next state and check if already expanded
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
@@ -393,7 +415,15 @@ class NaivePlanner(object):
                 # Quick FIX: use EE for transition costs so set nn_joint to EE
                 # still true b/c midpoints + joints, so last item is still last joint (EE)
                 bottle_goal_dist, arm_goal_dist = self.dist_to_goal(next_state, nn_joint_pos)
+                print("     ai[%d] bottle-goal, arm-bottle: %.3f, %.3f" % (
+                    ai,
+                    bottle_goal_dist - n.bottle_goal_dist,
+                    arm_bottle_dist - n.arm_bottle_dist))
                 h = self.heuristic(bottle_goal_dist, arm_bottle_dist, arm_goal_dist)
+                print("     ai[%d] delta h: %.3f, costs: %.3f, %.3f, %.3f, %.3f" % (
+                    ai, self.eps * (h - n.h), self.move_cost_w * move_cost,
+                    self.pos_var_w * pos_variance, self.ang_var_w * z_ang_variance,
+                    z_ang_mean))
                 new_G = cur_cost + trans_cost
 
                 # if state not expanded or found better path to next_state
@@ -403,17 +433,22 @@ class NaivePlanner(object):
                     overall_cost = new_G + self.eps * h
 
                     # add to open set
-                    heapq.heappush(open_set, Node(
+                    new_node = Node(
                         cost=overall_cost,
                         fall_prob=fall_prob,
                         fall_history=fall_history,
                         mode_sim_param=mode_sim_param,
                         g=new_G, h=h, bottle_goal_dist=bottle_goal_dist,
+                        arm_bottle_dist=arm_bottle_dist,
                         state=next_state,
                         nearest_arm_pos_i=nn_joint_i,
                         nearest_arm_pos=nn_joint_pos,
                         bottle_ori=next_bottle_ori,
-                        ee_pos=new_arm_positions[-1]))
+                        ee_pos=new_arm_positions[-1])
+                    print("     ai[%d] -> %s" % (ai, new_node))
+                    print("     ", np.array2string(np.array(next_bottle_ori), precision=2),
+                          "%.2f" % Bottle.calc_vert_angle(next_bottle_ori))
+                    heapq.heappush(open_set, new_node)
 
                     # build directed graph
                     transitions[next_state_key] = (ai, n)
@@ -469,7 +504,6 @@ class NaivePlanner(object):
 
     def dist_arm_to_bottle(self, state, positions):
         bottle_pos = self.bottle_pos_from_state(state)
-        bottle_pos = bottle_pos + self.env.bottle.center_of_mass
 
         # fake bottle position to be behind bottle in the direction towards the goal
         if self.guided_direction:
@@ -494,9 +528,17 @@ class NaivePlanner(object):
                 min_dist = dist
                 min_i = i
                 min_pos = pos
+
         return min_dist, min_i, min_pos
 
-    def calc_trans_cost(self, n: Node, new_arm_positions):
+    def calc_trans_cost(self, move_cost, fall_prob, pos_variance, z_ang_variance):
+        # z_ang_variance = 70 * (z_ang_variance / self.max_ang_var)
+        # pos_variance = 20 * (pos_variance / self.max_pos_var)
+        # fall_prob = 10 * fall_prob
+        # move_cost = 0.5 * (move_cost / self.max_move_dist)
+        return self.move_cost_w * move_cost + fall_prob + self.pos_var_w * pos_variance + self.ang_var_w * z_ang_variance
+
+    def calc_move_cost(self, n: Node, new_arm_positions):
         if self.use_ee_trans_cost:
             dist_traveled = np.linalg.norm(
                 np.array(n.ee_pos) - np.array(new_arm_positions[-1]))
@@ -510,7 +552,7 @@ class NaivePlanner(object):
 
     def heuristic(self, dist_to_goal, dist_arm_to_bottle, arm_goal_dist):
         # print(dist_to_goal, 0.6 * dist_arm_to_bottle, 0.5 * arm_goal_dist)
-        return dist_to_goal + dist_arm_to_bottle  # + 0.8 * arm_goal_dist
+        return dist_to_goal + 0.25 * dist_arm_to_bottle  # + 0.8 * arm_goal_dist
 
     def reached_goal_node(self, node: Node):
         return node.bottle_goal_dist < self.dist_thresh

@@ -18,6 +18,8 @@ from naive_joint_space_planner import NaivePlanner, SINGLE, AVG
 import helpers
 
 # Constants and Enums
+DEG2RAD = math.pi / 180.0
+RAD2DEG = 1 / DEG2RAD
 GRAVITY = -9.81
 BIMODAL = "bimodal"
 HIGH_FRIC = "high_fric"
@@ -60,9 +62,16 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
                 lineColorRGB=[0, 0, 1], lineWidth=1,
                 replaceItemUniqueId=None,
                 lifeTime=0)
+
+        s = "[%d]: " % step
+        s += "Bpos(" + ",".join(["%.2f" % v for v in cur_bottle_pos]) + "), "
+        s += "Bang(" + "%.1f" % (Bottle.calc_vert_angle(cur_bottle_ori) * RAD2DEG) + "), "
+        s += "Joints(" + ",".join(["%.3f" % v for v in cur_joints]) + "), "
+        print(s)
+
         state_tuple = StateTuple(bottle_pos=cur_bottle_pos, bottle_ori=cur_bottle_ori,
                                  joints=cur_joints)
-        step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints = (
+        step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints, _ = (
             env.run_sim(state=state_tuple, action=policy[step], sim_params=exec_params,
                         prev_state=None, prev_action=None)
         )
@@ -448,9 +457,6 @@ def main():
             res_fname = "%s/results_%d" % (planner_folder, start_goal_idx)
             (startb, goalb, start_joints) = start_goals[start_goal_idx]
             start_bottle_ori = np.array([0, 0, 0, 1])
-
-        print(goalb)
-        # (0.42,0.40,0.13)
 
         start_state = helpers.bottle_EE_to_state(
             bpos=startb, arm=arm, joints=start_joints)
