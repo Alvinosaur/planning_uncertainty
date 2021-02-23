@@ -103,7 +103,7 @@ class Node(object):
 class NaivePlanner(object):
     def __init__(self, env, sim_mode, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
                  da_rad=15 * DEG2RAD, visualize=False, start=None, goal=None,
-                 fall_thresh=0.2, use_ee_trans_cost=True, simulate_prev_trans=False, sim_type="always_N",
+                 fall_thresh=0.2, use_ee_trans_cost=True, sim_type="always_N",
                  sim_dist_thresh=0.18, single_param=None):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
@@ -132,13 +132,6 @@ class NaivePlanner(object):
         self.G = dict()
         self.use_EE = False
         self.guided_direction = True
-
-        # choose to simulate not only (s_t,a_t) but also (s_t-1, a_t-1)
-        # only useful for AVG planner which uses mode next state as the successor
-        # and this mode may not accurately reflect next state of some simulations
-        if simulate_prev_trans and sim_mode == SINGLE:
-            print("Trying to use simulate_prev_trans=True with SINGLE planner is useless, ignoring...")
-        self.simulate_prev_trans = simulate_prev_trans and (sim_mode != SINGLE)
 
         self.visualize = visualize
 
@@ -298,24 +291,10 @@ class NaivePlanner(object):
             state = n.state
             state_key = self.state_to_key(state)
 
-            if self.simulate_prev_trans and num_expansions > 1:
-                prev_ai, prev_node = transitions[state_key]
-                prev_action = self.A.get_action(prev_ai)
-                prev_joints = self.joint_pose_from_state(prev_node.state)
-                prev_bottle_pos = self.bottle_pos_from_state(prev_node.state)
-                prev_bottle_ori = prev_node.bottle_ori
-                prev_state_tuple = StateTuple(bottle_pos=prev_bottle_pos,
-                                              bottle_ori=prev_bottle_ori,
-                                              joints=prev_joints)
-            else:
-                prev_state_tuple = None
-                prev_action = None
-
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
             cur_state_tuple = StateTuple(bottle_pos=bottle_pos, bottle_ori=bottle_ori, joints=cur_joints)
-            guided_bottle_pos = self.get_guided_bottle_pos(bottle_pos)
 
             print(n, flush=True)
             if state_key in closed_set:
@@ -352,9 +331,8 @@ class NaivePlanner(object):
                 if self.sim_mode == SINGLE:
                     # only use one simulation parameter set
                     (is_fallen, _, next_bottle_pos,
-                     next_bottle_ori, next_joint_pose) = self.sim_func(
+                     next_bottle_ori, next_joint_pose, z_ang_mean) = self.sim_func(
                         action=action, state=cur_state_tuple,
-                        prev_state=prev_state_tuple, prev_action=prev_action,
                         sim_params=self.single_param)
 
                     mode_sim_param = self.single_param
@@ -370,11 +348,10 @@ class NaivePlanner(object):
                             (self.sim_type == CLOSE_N and n.bottle_goal_dist <= self.sim_dist_thresh)):
                         sim_params_set = self.sim_params_set
                     else:
-                        sim_params_set = self.single_param
+                        sim_params_set = [self.single_param]
 
                     results = self.sim_func(
                         action=action, state=cur_state_tuple,
-                        prev_state=prev_state_tuple, prev_action=prev_action,
                         sim_params_set=sim_params_set)
 
                     (fall_prob, pos_variance, z_ang_variance, z_ang_mean, fall_history, next_bottle_pos,
@@ -397,7 +374,6 @@ class NaivePlanner(object):
 
                 move_cost = self.calc_move_cost(n, new_arm_positions)
                 trans_cost = self.calc_trans_cost(move_cost=move_cost,
-                                                  fall_prob=fall_prob,
                                                   pos_variance=pos_variance,
                                                   z_ang_variance=z_ang_variance)
                 trans_cost += z_ang_mean
@@ -531,12 +507,12 @@ class NaivePlanner(object):
 
         return min_dist, min_i, min_pos
 
-    def calc_trans_cost(self, move_cost, fall_prob, pos_variance, z_ang_variance):
+    def calc_trans_cost(self, move_cost, pos_variance, z_ang_variance):
         # z_ang_variance = 70 * (z_ang_variance / self.max_ang_var)
         # pos_variance = 20 * (pos_variance / self.max_pos_var)
         # fall_prob = 10 * fall_prob
         # move_cost = 0.5 * (move_cost / self.max_move_dist)
-        return self.move_cost_w * move_cost + fall_prob + self.pos_var_w * pos_variance + self.ang_var_w * z_ang_variance
+        return self.move_cost_w * move_cost + self.pos_var_w * pos_variance + self.ang_var_w * z_ang_variance
 
     def calc_move_cost(self, n: Node, new_arm_positions):
         if self.use_ee_trans_cost:

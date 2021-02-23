@@ -158,8 +158,7 @@ class Environment(object):
         self.bottle.start_pos = new_pos
 
     def run_multiple_sims(self, action, sim_params_set,
-                          state: StateTuple, prev_state: StateTuple,
-                          prev_action: T.Union[T.Tuple, None]):
+                          state: StateTuple):
         """
         Simply run multiple simulations with different bottle parameters.
         Return a list of all results, each entry as a tuple. Let the planner do
@@ -169,9 +168,7 @@ class Environment(object):
         for sim_params in sim_params_set:
             results = self.run_sim(action=action,
                                    sim_params=sim_params,
-                                   state=state,
-                                   prev_state=prev_state,
-                                   prev_action=prev_action)
+                                   state=state)
             all_results.append(results)
 
             # extra optimization: if arm didn't touch bottle, no need for more
@@ -182,8 +179,7 @@ class Environment(object):
         return all_results
 
     def run_sim(self, action: T.Tuple, sim_params: EnvParams,
-                state: StateTuple, prev_state: T.Union[StateTuple, None] = None,
-                prev_action: T.Union[T.Tuple, None] = None) -> SimResults:
+                state: StateTuple) -> SimResults:
         """
         High-level interface with simulator: run simulation given some current state composed of
         bottle pose and arm joint poise. Specify some action to take. Generates a joint-space trajectory
@@ -196,17 +192,8 @@ class Environment(object):
         target_joint_pose = state.joints + dq
         joint_traj = np.linspace(state.joints, target_joint_pose, num=num_iters)
 
-        if prev_action is not None:
-            # add previous state-action transition to the beginning of trajectory
-            dq, num_iters = prev_action
-            prev_joint_traj = np.linspace(prev_state.joints, state.joints, num=num_iters)
-            joint_traj = np.vstack([prev_joint_traj, joint_traj])
-            bottle_pos = prev_state.bottle_pos
-            bottle_ori = prev_state.bottle_ori
-
-        else:
-            bottle_pos = state.bottle_pos
-            bottle_ori = state.bottle_ori
+        bottle_pos = state.bottle_pos
+        bottle_ori = state.bottle_ori
 
         return self.simulate_plan(joint_traj=joint_traj,
                                   start_bottle_pos=bottle_pos, start_bottle_ori=bottle_ori,

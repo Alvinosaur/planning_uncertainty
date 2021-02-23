@@ -72,8 +72,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         state_tuple = StateTuple(bottle_pos=cur_bottle_pos, bottle_ori=cur_bottle_ori,
                                  joints=cur_joints)
         step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints, _ = (
-            env.run_sim(state=state_tuple, action=policy[step], sim_params=exec_params,
-                        prev_state=None, prev_action=None)
+            env.run_sim(state=state_tuple, action=policy[step], sim_params=exec_params)
         )
         if visualize:
             env.goal_line_id = env.draw_line(
@@ -296,10 +295,10 @@ def main():
     # Load start-goal pairs to solve
     with open("filtered_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
-        # (startb, goalb, start_joints) = start_goals[20]
-        # goalb += np.array([0.3, 0.1, 0])
-        # start_joints[1] -= math.pi / 6
-        # start_goals[11] = (startb, goalb, start_joints)
+        # (startb, goalb, start_joints) = start_goals[1]
+        # startb += np.array([-0.3, -0.1, 0])
+        # goalb += np.array([0.2, -0.3, 0])  # .43, .06
+        # start_goals[1] = (startb, goalb, start_joints)
 
     # with open("filtered_start_goals.obj", "wb") as f:
     #     pickle.dump(start_goals, f)
@@ -407,7 +406,7 @@ def main():
                            dist_thresh=args.goal_thresh, eps=args.eps, da_rad=da_rad,
                            dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
                            fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost,
-                           simulate_prev_trans=args.simulate_prev_trans, sim_type=args.sim_type,
+                           sim_type=args.sim_type,
                            sim_dist_thresh=args.sim_dist_thresh, single_param=single_param)
 
     print("plan_params_sets:")

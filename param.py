@@ -19,13 +19,12 @@ def parse_arguments():
 
     # Planner Agnostic  simulate_prev
     parser.add_argument('--use_ee_trans_cost', action="store", type=bool, default="true")
-    parser.add_argument('--simulate_prev_trans', action="store_true")
     parser.add_argument('--max_time', action="store", type=int, default="60",
                         help="Single planner planning time limit (sec), mulitplied by N for average planner.")
     parser.add_argument('--dx', action="store", type=float, default="0.1")
     parser.add_argument('--dy', action="store", type=float, default="0.1")
     parser.add_argument('--dz', action="store", type=float, default="0.1")
-    parser.add_argument('--goal_thresh', action="store", type=float, default="0.2")
+    parser.add_argument('--goal_thresh', action="store", type=float, default="0.13")
     parser.add_argument('--dtheta', action="store", type=int, default="8")
     parser.add_argument('--eps', action="store", type=float, default="7")
 
