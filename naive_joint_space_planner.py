@@ -70,8 +70,9 @@ SIM_TYPE_TO_ID = {
 
 class Node(object):
     def __init__(self, cost, state, nearest_arm_pos_i,
-                 nearest_arm_pos, ee_pos, fall_history=[], mode_sim_param=None, fall_prob=-1,
-                 bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0, bottle_goal_dist=np.inf, arm_bottle_dist=np.inf):
+                 nearest_arm_pos, ee_pos, fall_history=[], mode_sim_param=None, fall_prob=-1.0,
+                 bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0, bottle_goal_dist=np.inf, arm_bottle_dist=np.inf,
+                 is_fully_evaluated=False):
         self.cost = cost
         self.fall_prob = fall_prob
         self.fall_history = fall_history
@@ -85,6 +86,7 @@ class Node(object):
         self.nearest_arm_pos_i = nearest_arm_pos_i
         self.nearest_arm_pos = nearest_arm_pos
         self.ee_pos = ee_pos
+        self.is_fully_evaluated = is_fully_evaluated  # only used for lazy approach
 
     def __lt__(self, other):
         return self.cost < other.cost
@@ -104,7 +106,7 @@ class NaivePlanner(object):
     def __init__(self, env, sim_mode, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
                  da_rad=15 * DEG2RAD, visualize=False, start=None, goal=None,
                  fall_thresh=0.2, use_ee_trans_cost=True, sim_type="always_N",
-                 sim_dist_thresh=0.18, single_param=None):
+                 sim_dist_thresh=0.18, single_param=None, lazy=False):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -151,10 +153,15 @@ class NaivePlanner(object):
         assert sim_type in SIM_TYPE_TO_ID, "{} not a valid sim_type!".format(sim_type)
         self.sim_type = SIM_TYPE_TO_ID[sim_type]
         self.sim_dist_thresh = sim_dist_thresh
+        self.lazy = lazy
 
         # method of simulating an action
         self.sim_mode = sim_mode
-        if sim_mode == SINGLE:
+        if lazy:
+            self.sim_func = self.env.run_sim
+            self.full_sim_func = self.env.run_multiple_sims
+            self.process_multiple_sim_results = self.avg_results
+        elif sim_mode == SINGLE:
             self.sim_func = self.env.run_sim
         elif sim_mode == AVG:
             self.sim_func = self.env.run_multiple_sims
@@ -278,6 +285,7 @@ class NaivePlanner(object):
 
         # metrics on performance of planner
         num_expansions = 0
+        num_nonlazy_evals = 0
 
         # find solution
         goal_expanded = False
@@ -296,6 +304,84 @@ class NaivePlanner(object):
             bottle_pos = self.bottle_pos_from_state(state)
             cur_state_tuple = StateTuple(bottle_pos=bottle_pos, bottle_ori=bottle_ori, joints=cur_joints)
 
+            # re-evaluate using N simulations
+            if self.lazy and state_key in transitions and not n.is_fully_evaluated:
+                num_nonlazy_evals += 1
+
+                prev_ai, prev_n = transitions[state_key]
+                prev_action = self.A.get_action(prev_ai)
+                prev_bottle = self.bottle_pos_from_state(prev_n.state)
+                prev_joints = self.joint_pose_from_state(prev_n.state)
+                prev_state_tuple = StateTuple(bottle_pos=prev_bottle, bottle_ori=prev_n.bottle_ori, joints=prev_joints)
+                results = self.full_sim_func(
+                    action=prev_action, state=prev_state_tuple,
+                    sim_params_set=self.sim_params_set)
+
+                (fall_prob, pos_variance, z_ang_variance, z_ang_mean, fall_history, next_bottle_pos,
+                 next_bottle_ori, next_joint_pose, mode_sim_param) = (
+                    self.process_multiple_sim_results(results, self.sim_params_set))
+                invalid = fall_prob > self.fall_thresh
+
+                next_state = np.concatenate([next_bottle_pos, next_joint_pose])
+                next_state_key = self.state_to_key(next_state)
+
+                # completely ignore actions that knock over bottle with high
+                # probability
+                if invalid:
+                    continue
+
+                new_arm_positions = self.env.arm.get_joint_link_positions(
+                    next_joint_pose)
+
+                move_cost = self.calc_move_cost(n, new_arm_positions)
+                trans_cost = self.calc_trans_cost(move_cost=move_cost,
+                                                  pos_variance=pos_variance,
+                                                  z_ang_variance=z_ang_variance)
+                trans_cost += z_ang_mean
+                # self.time_cost_weight * self.A.get_action_time_cost(action))
+
+                # build next state and check if already expanded
+                next_state = np.concatenate([next_bottle_pos, next_joint_pose])
+                next_state_key = self.state_to_key(next_state)
+
+                arm_bottle_dist, nn_joint_i, nn_joint_pos = (
+                    self.dist_arm_to_bottle(next_state, new_arm_positions))
+
+                # Quick FIX: use EE for transition costs so set nn_joint to EE
+                # still true b/c midpoints + joints, so last item is still last joint (EE)
+                bottle_goal_dist, arm_goal_dist = self.dist_to_goal(next_state, nn_joint_pos)
+                print("     **lazy** ai[%d] bottle-goal, arm-bottle: %.3f, %.3f" % (
+                    prev_ai,
+                    bottle_goal_dist - n.bottle_goal_dist,
+                    arm_bottle_dist - n.arm_bottle_dist))
+                h = self.heuristic(bottle_goal_dist, arm_bottle_dist, arm_goal_dist)
+                print("     **lazy** ai[%d] delta h: %.3f, costs: %.3f, %.3f, %.3f, %.3f" % (
+                    prev_ai, self.eps * (h - n.h), self.move_cost_w * move_cost,
+                    self.pos_var_w * pos_variance, self.ang_var_w * z_ang_variance,
+                    z_ang_mean))
+                cur_cost = self.G[self.state_to_key(prev_n.state)]
+                new_G = cur_cost + trans_cost
+                self.G[next_state_key] = new_G
+                overall_cost = new_G + self.eps * h
+                new_node = Node(
+                    cost=overall_cost,
+                    fall_prob=fall_prob,
+                    fall_history=fall_history,
+                    mode_sim_param=mode_sim_param,
+                    g=new_G, h=h, bottle_goal_dist=bottle_goal_dist,
+                    arm_bottle_dist=arm_bottle_dist,
+                    state=next_state,
+                    nearest_arm_pos_i=nn_joint_i,
+                    nearest_arm_pos=nn_joint_pos,
+                    bottle_ori=next_bottle_ori,
+                    ee_pos=new_arm_positions[-1],
+                    is_fully_evaluated=True)
+
+                heapq.heappush(open_set, new_node)
+
+                # build directed graph
+                transitions[next_state_key] = (prev_ai, prev_n)
+
             print(n, flush=True)
             if state_key in closed_set:
                 continue
@@ -304,7 +390,7 @@ class NaivePlanner(object):
             # check if found goal, if so loop will terminate in next iteration
             if self.reached_goal_node(n):
                 goal_expanded = True
-                self.goal = state
+                self.new_goal = state
 
             # extra current total move-cost of current state
             assert(state_key in self.G)
@@ -328,7 +414,7 @@ class NaivePlanner(object):
                 # print(np.array2string(action[0], precision=2))
 
                 # (state, action) -> (cost, next_state)
-                if self.sim_mode == SINGLE:
+                if self.sim_mode == SINGLE or self.lazy:
                     # only use one simulation parameter set
                     (is_fallen, _, next_bottle_pos,
                      next_bottle_ori, next_joint_pose, z_ang_mean) = self.sim_func(
@@ -434,13 +520,14 @@ class NaivePlanner(object):
 
         print("States Expanded: %d, found goal: %d" %
               (num_expansions, goal_expanded))
+        print("Num nonlazy evaluations: %d" % num_nonlazy_evals)
         if not goal_expanded:
             return [], []
         # reconstruct path
         policy = []
         planned_path = []
         node_path = []
-        state = self.goal
+        state = self.new_goal
         state_key = self.state_to_key(state)
         start_key = self.state_to_key(self.start)
         # NOTE: planned_path does not include initial starting pose!

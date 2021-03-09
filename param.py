@@ -62,6 +62,7 @@ def parse_arguments():
     # possible options: always_N, always_1, far_N, close_N
     parser.add_argument('--sim_type', action="store", type=str, default="always_N")
     parser.add_argument('--sim_dist_thresh', action="store", type=float, default="0.25")
+    parser.add_argument('--lazy', action="store_true")
 
     args = parser.parse_args()
 

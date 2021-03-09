@@ -69,6 +69,9 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         s += "Joints(" + ",".join(["%.3f" % v for v in cur_joints]) + "), "
         print(s)
 
+        dist_bottle_to_goal = np.linalg.norm(cur_bottle_pos[:2] - bottle_goal[:2])
+        print("Bottle dist %.3f ? %.3f (thresh)" % (dist_bottle_to_goal, planner.sim_dist_thresh))
+
         state_tuple = StateTuple(bottle_pos=cur_bottle_pos, bottle_ori=cur_bottle_ori,
                                  joints=cur_joints)
         step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints, _ = (
@@ -293,12 +296,13 @@ def main():
     assert (args.goal_thresh >= args.dx)
 
     # Load start-goal pairs to solve
-    with open("filtered_start_goals.obj", "rb") as f:
+    # with open("filtered_start_goals.obj", "rb") as f:
+    with open("test_start_goals.obj", "rb") as f:
         start_goals = pickle.load(f)
-        # (startb, goalb, start_joints) = start_goals[1]
-        # startb += np.array([-0.3, -0.1, 0])
-        # goalb += np.array([0.2, -0.3, 0])  # .43, .06
-        # start_goals[1] = (startb, goalb, start_joints)
+        # (startb, goalb, start_joints) = start_goals[3]
+        # # startb += np.array([0.2, 0.1, 0])
+        # goalb += np.array([-0., -0, 0])  # .43, .06
+        # start_goals[3] = (startb, goalb, start_joints)
 
     # with open("filtered_start_goals.obj", "wb") as f:
     #     pickle.dump(start_goals, f)
@@ -318,6 +322,24 @@ def main():
         if args.n_sims != len(plan_params_sets):
             raise Exception(
                 f"n_sims {args.n_sims} != len(plan_params_set) {len(plan_params_sets)}")
+
+        if single_param is None:
+            # Test if single planner using low and high friction produce different performance
+            if args.single_low_fric:
+                print("Manually forcing single planner to use LOW friction")
+                env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
+                single_param = env.gen_random_env_param_set(num=1)[0]
+
+            elif args.single_high_fric:
+                print("Manually forcing single planner to use HIGH friction")
+                env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
+                single_param = env.gen_random_env_param_set(num=1)[0]
+
+            elif args.single_med_fric:
+                print("Manually forcing single planner to use MEDIUM friction")
+                env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
+                single_param = env.gen_random_env_param_set(num=1)[0]
+
     else:
         print(f"Sampling {sample_strat} distribution")
         # unimodal high friction
@@ -407,11 +429,15 @@ def main():
                            dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
                            fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost,
                            sim_type=args.sim_type,
-                           sim_dist_thresh=args.sim_dist_thresh, single_param=single_param)
+                           sim_dist_thresh=args.sim_dist_thresh, single_param=single_param,
+                           lazy=args.lazy)
 
     print("plan_params_sets:")
     for param in plan_params_sets:
         print(param)
+
+    print("single_param:")
+    print(single_param)
 
     # Possibly specify a specific start-goal pair to run
     if args.start_goal != -1:
@@ -419,7 +445,7 @@ def main():
     elif args.start_goal_range is not None:
         try:
             left, right = re.findall("(\d+)-(\d+)", args.start_goal_range)[0]
-            targets = list(range(int(left), int(right)+1))
+            targets = list(range(int(left), int(right) + 1))
         except:
             print("Failed to parse start_goal_range string: %s, requires format (\d+)-(\d+)" %
                   args.start_goal_range)
@@ -481,4 +507,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

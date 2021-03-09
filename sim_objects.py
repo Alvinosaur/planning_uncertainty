@@ -136,6 +136,7 @@ class Arm:
         self.kukaId = kuka_id
         self.base_pos = np.array([0, 0, 0.1])
         self.min_dist = 0.3
+        self.MAX_HORIZ_REACH = None  # need to set with set_general_max_reach()
         self.default_joint_pose = np.array(
             [0, math.pi / 2, math.pi / 2, 0, 0, 0, 0])
 
@@ -226,6 +227,23 @@ class Arm:
             # print(joints)
 
         self.reset(self.joint_pose)
+
+    def calc_max_horiz_dist(self, contact_height):
+        hprime = abs(self.L1 - contact_height)
+        dprime = (self.rprime**2 - hprime**2)**0.5
+        max_horiz_dist = dprime + self.LE
+        return max_horiz_dist
+
+    def set_general_max_reach(self, all_contact_heights):
+        closest_h = None
+        min_dist = 0  # dist from L1 joint, which has fixed height
+        for h in all_contact_heights:
+            dist = abs(h - self.L1)
+            if dist < min_dist or closest_h is None:
+                min_dist = dist
+                closest_h = h
+
+        self.MAX_HORIZ_REACH = self.calc_max_horiz_dist(closest_h)
 
     def get_target_joints(self, target_EE_pos, angle):
         """Given target EE position, runs pybullet's internal inverse

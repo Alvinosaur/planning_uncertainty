@@ -157,7 +157,7 @@ class Environment(object):
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
 
-    def run_multiple_sims(self, action, sim_params_set,
+    def run_multiple_sims(self, action, sim_params_set: T.List[EnvParams],
                           state: StateTuple):
         """
         Simply run multiple simulations with different bottle parameters.
@@ -266,7 +266,7 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
-                time.sleep(0.001)
+                # time.sleep(0.001)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory
@@ -335,7 +335,7 @@ class Environment(object):
 
             joint_traj = np.linspace(
                 start=self.arm.joint_pose, stop=target_joints, num=num_iters)
-            assert(len(joint_traj) == num_iters)
+            assert (len(joint_traj) == num_iters)
 
             for i in range(num_iters):
                 next_joints = joint_traj[i, :]
@@ -384,7 +384,7 @@ class Environment(object):
             param_set.append(param)
         return param_set
 
-    @ staticmethod
+    @staticmethod
     def get_random_sample_prob(distrib, minv, maxv, num=1):
         """get N random samples and their "probability"
         Args:
@@ -406,7 +406,7 @@ class Environment(object):
             probs.append(p)
         return rand_vars, probs
 
-    @ staticmethod
+    @staticmethod
     def draw_line(lineFrom, lineTo, lineColorRGB, lineWidth, lifeTime,
                   replaceItemUniqueId=None):
         if replaceItemUniqueId is not None:
@@ -416,7 +416,7 @@ class Environment(object):
             return p.addUserDebugLine(lineFrom, lineTo, lineColorRGB,
                                       lineWidth, lifeTime)
 
-    @ staticmethod
+    @staticmethod
     def avg_quaternion(quaternions):
         """Finds average of quaternions from this post. Doesn't seem to work
         too well though.
@@ -437,7 +437,7 @@ class Environment(object):
         avg_quat = VT[0, :]
         return avg_quat  # / np.linalg.norm(avg_quat)
 
-    @ staticmethod
+    @staticmethod
     def state_to_str(state):
         s = ", ".join(["%.3f" % val for val in state])
         return s
