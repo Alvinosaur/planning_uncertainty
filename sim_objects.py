@@ -6,6 +6,7 @@ from scipy.spatial.transform import Rotation as R
 PI = math.pi
 TWO_PI = 2 * PI
 
+
 # water bottle
 
 
@@ -194,7 +195,7 @@ class Arm:
         # By default ignore the first 3 joints since will not be able to
         # interact with bottle
         joint_positions = self.get_link_positions(joint_pose)
-        joint_positions = joint_positions[start_i:end_i]
+        joint_positions = joint_positions[start_i:]
         midpoints = []
         # only calculate midpoint btwn last static and 1st dynamic
         for i in range(len(joint_positions) - 1):
@@ -230,7 +231,7 @@ class Arm:
 
     def calc_max_horiz_dist(self, contact_height):
         hprime = abs(self.L1 - contact_height)
-        dprime = (self.rprime**2 - hprime**2)**0.5
+        dprime = (self.rprime ** 2 - hprime ** 2) ** 0.5
         max_horiz_dist = dprime + self.LE
         return max_horiz_dist
 
@@ -258,7 +259,7 @@ class Arm:
         Returns:
             [type]: [description]
         """
-        assert(len(self.ll) == len(self.ul) == len(self.jr) == len(self.rp))
+        assert (len(self.ll) == len(self.ul) == len(self.jr) == len(self.rp))
         joint_poses = p.calculateInverseKinematics(
             self.kukaId,
             self.EE_idx,

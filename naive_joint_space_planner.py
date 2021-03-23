@@ -9,7 +9,6 @@ from pyquaternion import Quaternion
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace, StateTuple
 
-
 """
 Given: some initial joint space configuration as well as start and end positions (x,y) of bottle
 
@@ -253,11 +252,11 @@ class NaivePlanner(object):
         # initialize open set with start and G values
         try:
             arm_positions = self.env.arm.get_joint_link_positions(
-            self.joint_pose_from_state(self.start))
+                self.joint_pose_from_state(self.start))
         except:
             self.env.reset()
             arm_positions = self.env.arm.get_joint_link_positions(
-            self.joint_pose_from_state(self.start))
+                self.joint_pose_from_state(self.start))
         _, nn_joint_i, nn_joint_pos = (
             self.dist_arm_to_bottle(self.start, arm_positions))
         open_set = [
@@ -337,7 +336,7 @@ class NaivePlanner(object):
                 trans_cost = self.calc_trans_cost(move_cost=move_cost,
                                                   pos_variance=pos_variance,
                                                   z_ang_variance=z_ang_variance)
-                trans_cost += z_ang_mean
+                # trans_cost += z_ang_mean
                 # self.time_cost_weight * self.A.get_action_time_cost(action))
 
                 # build next state and check if already expanded
@@ -393,7 +392,7 @@ class NaivePlanner(object):
                 self.new_goal = state
 
             # extra current total move-cost of current state
-            assert(state_key in self.G)
+            assert (state_key in self.G)
             cur_cost = self.G[state_key]
 
             # explore all actions from this state
@@ -462,7 +461,7 @@ class NaivePlanner(object):
                 trans_cost = self.calc_trans_cost(move_cost=move_cost,
                                                   pos_variance=pos_variance,
                                                   z_ang_variance=z_ang_variance)
-                trans_cost += z_ang_mean
+                # trans_cost += z_ang_mean
                 # self.time_cost_weight * self.A.get_action_time_cost(action))
 
                 # build next state and check if already expanded
@@ -581,25 +580,28 @@ class NaivePlanner(object):
                 replaceItemUniqueId=self.env.target_line_id,
                 lifeTime=0)
 
-        min_dist = None
-        min_i = 0
-        min_pos = None
-        for i, pos in enumerate(positions):
-            diff = self.dist_cost_weights * (np.array(pos) - bottle_pos)
-            dist = np.linalg.norm(diff)
-            if min_dist is None or dist < min_dist:
-                min_dist = dist
-                min_i = i
-                min_pos = pos
+        dist = np.linalg.norm(self.dist_cost_weights * (np.array(positions[-1]) - bottle_pos))
+        return dist, -1, positions[-1]
 
-        return min_dist, min_i, min_pos
+        # min_dist = None
+        # min_i = 0
+        # min_pos = None
+        # for i, pos in enumerate(positions):
+        #     diff = self.dist_cost_weights * (np.array(pos) - bottle_pos)
+        #     dist = np.linalg.norm(diff)
+        #     if min_dist is None or dist < min_dist:
+        #         min_dist = dist
+        #         min_i = i
+        #         min_pos = pos
+        #
+        # return min_dist, min_i, min_pos
 
     def calc_trans_cost(self, move_cost, pos_variance, z_ang_variance):
         # z_ang_variance = 70 * (z_ang_variance / self.max_ang_var)
         # pos_variance = 20 * (pos_variance / self.max_pos_var)
         # fall_prob = 10 * fall_prob
         # move_cost = 0.5 * (move_cost / self.max_move_dist)
-        return self.move_cost_w * move_cost + self.pos_var_w * pos_variance + self.ang_var_w * z_ang_variance
+        return self.move_cost_w * move_cost  # + self.pos_var_w * pos_variance + self.ang_var_w * z_ang_variance
 
     def calc_move_cost(self, n: Node, new_arm_positions):
         if self.use_ee_trans_cost:
@@ -615,7 +617,7 @@ class NaivePlanner(object):
 
     def heuristic(self, dist_to_goal, dist_arm_to_bottle, arm_goal_dist):
         # print(dist_to_goal, 0.6 * dist_arm_to_bottle, 0.5 * arm_goal_dist)
-        return dist_to_goal + 0.25 * dist_arm_to_bottle  # + 0.8 * arm_goal_dist
+        return dist_to_goal + dist_arm_to_bottle  # + 0.8 * arm_goal_dist
 
     def reached_goal_node(self, node: Node):
         return node.bottle_goal_dist < self.dist_thresh
@@ -641,23 +643,23 @@ class NaivePlanner(object):
         joints = (joints_i * self.da) + self.env.arm.ul
         return np.concatenate([pos, joints])
 
-    @ staticmethod
+    @staticmethod
     def is_invalid_transition(trans_cost):
         return trans_cost == Environment.INF
 
-    @ staticmethod
+    @staticmethod
     def bottle_pos_from_state(state):
         return state[:3].copy()
 
-    @ staticmethod
+    @staticmethod
     def joint_pose_from_state(state):
         return state[3:].copy()
 
-    @ staticmethod
+    @staticmethod
     def format_state(bottle_pos, joints):
         return np.concatenate([bottle_pos, joints])
 
-    @ staticmethod
+    @staticmethod
     def state_to_str(state):
         s = ", ".join(["%.2f" % val for val in state])
         return s
@@ -665,6 +667,6 @@ class NaivePlanner(object):
 
 def test_state_indexing():
     state = list(range(10))
-    assert(NaivePlanner.bottle_pos_from_state(state) == [0, 1, 2])
-    assert(NaivePlanner.joint_pose_from_state(
+    assert (NaivePlanner.bottle_pos_from_state(state) == [0, 1, 2])
+    assert (NaivePlanner.joint_pose_from_state(
         state) == [3, 4, 5, 6, 7, 8, 9])
