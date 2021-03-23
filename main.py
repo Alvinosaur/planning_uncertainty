@@ -496,6 +496,7 @@ def main():
                                               max_time_s=args.max_time,
                                               cur_bottle_ori=start_bottle_ori)
         else:
+            start = time.time()
             piecewise_execution(planner, env,
                                 exec_params_set=exec_params_set,
                                 replay_results=args.replay_results,
@@ -503,6 +504,8 @@ def main():
                                 visualize=args.visualize,
                                 max_time_s=args.max_time,
                                 cur_bottle_ori=start_bottle_ori)
+            end = time.time()
+            print("total planning time: %.2f" % (end - start))
 
 
 if __name__ == "__main__":

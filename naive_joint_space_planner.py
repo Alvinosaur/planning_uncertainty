@@ -250,6 +250,7 @@ class NaivePlanner(object):
 
     def plan(self, bottle_ori=np.array([0, 0, 0, 1])):
         # initialize open set with start and G values
+        start = time.time()
         try:
             arm_positions = self.env.arm.get_joint_link_positions(
                 self.joint_pose_from_state(self.start))
@@ -288,9 +289,14 @@ class NaivePlanner(object):
 
         # find solution
         goal_expanded = False
-
+        end = time.time()
+        setup_time = end - start
+        total_pre_expansion_time = 0
+        total_calc_cost_time = 0
+        total_sim_time = 0
+        total_process_sim_time = 0
         while not goal_expanded and len(open_set) > 0:
-            # start_time = time.time()
+            start = time.time()
             num_expansions += 1
 
             # get next state to expand
@@ -394,9 +400,15 @@ class NaivePlanner(object):
             # extra current total move-cost of current state
             assert (state_key in self.G)
             cur_cost = self.G[state_key]
+            end = time.time()
+            pre_expansion = end - start
 
             # explore all actions from this state
             # for ai in self.A.action_ids:
+            sim_time = 0
+            process_sim_time = 0
+            insert_open_time = 0
+            calc_cost_time = 0
             for ai in self.A.action_ids:
                 if self.visualize:
                     vertical_offset = np.array([0, 0, 0.5])
@@ -435,25 +447,28 @@ class NaivePlanner(object):
                     else:
                         sim_params_set = [self.single_param]
 
+                    start = time.time()
                     results = self.sim_func(
                         action=action, state=cur_state_tuple,
                         sim_params_set=sim_params_set)
+                    end = time.time()
+                    sim_time += end - start
 
+                    start = time.time()
                     (fall_prob, pos_variance, z_ang_variance, z_ang_mean, fall_history, next_bottle_pos,
                      next_bottle_ori, next_joint_pose, mode_sim_param) = (
                         self.process_multiple_sim_results(results, sim_params_set))
                     invalid = fall_prob > self.fall_thresh
+                    end = time.time()
+                    process_sim_time += end - start
                     # print(invalid, fall_prob)
-
-                # print("Is fallen: %d, action: %s" % (invalid, action))
-                next_state = np.concatenate([next_bottle_pos, next_joint_pose])
-                next_state_key = self.state_to_key(next_state)
 
                 # completely ignore actions that knock over bottle with high
                 # probability
                 if invalid:
                     continue
 
+                start = time.time()
                 new_arm_positions = self.env.arm.get_joint_link_positions(
                     next_joint_pose)
 
@@ -487,7 +502,11 @@ class NaivePlanner(object):
                     z_ang_mean))
                 new_G = cur_cost + trans_cost
 
+                end = time.time()
+                calc_cost_time += end - start
+
                 # if state not expanded or found better path to next_state
+                start = time.time()
                 if next_state_key not in self.G or (
                         self.G[next_state_key] > new_G):
                     self.G[next_state_key] = new_G
@@ -515,13 +534,30 @@ class NaivePlanner(object):
                     transitions[next_state_key] = (ai, n)
                     # print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
 
+                end = time.time()
+                insert_open_time += end - start
+
+            total_pre_expansion_time += pre_expansion
+            total_calc_cost_time += calc_cost_time
+            total_sim_time += sim_time
+            total_process_sim_time += process_sim_time
+
             # print("time: %.3f" % (time.time() - start_time))
+
+        print("Setup time: %.2f" % setup_time)
+        print("pre_expansion time: %.2f" % total_pre_expansion_time)
+        print("calc cost time: %.2f" % total_calc_cost_time)
+        print("sim time: %.2f" % total_sim_time)
+        print("process sim time: %.2f" % total_process_sim_time)
 
         print("States Expanded: %d, found goal: %d" %
               (num_expansions, goal_expanded))
         print("Num nonlazy evaluations: %d" % num_nonlazy_evals)
         if not goal_expanded:
-            return [], []
+            print("path reverse time: %.2f" % 0.0)
+            return [], [], []
+
+        start = time.time()
         # reconstruct path
         policy = []
         planned_path = []
@@ -546,6 +582,10 @@ class NaivePlanner(object):
         planned_path.reverse()
         policy.reverse()
         node_path.reverse()
+        end = time.time()
+        path_reverse_time = end - start
+        print("path reverse time: %.2f" % path_reverse_time)
+
         return planned_path, policy, node_path
 
     def get_guided_bottle_pos(self, bpos, dist_offset=0.1):
