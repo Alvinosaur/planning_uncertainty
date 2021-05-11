@@ -200,10 +200,11 @@ class Environment(object):
                                   sim_params=sim_params)
 
     def reset(self):
-        p.resetSimulation()
-        p.setGravity(0, 0, self.GRAVITY)
-        p.loadURDF(self.plane_urdf_filepath, basePosition=[0, 0, 0])
-        self.arm.kukaId = p.loadURDF(self.arm_filepath, basePosition=[0, 0, 0])
+        pass
+        # p.resetSimulation()
+        # p.setGravity(0, 0, self.GRAVITY)
+        # p.loadURDF(self.plane_urdf_filepath, basePosition=[0, 0, 0])
+        # self.arm.kukaId = p.loadURDF(self.arm_filepath, basePosition=[0, 0, 0])
 
     def command_new_pose(self, joint_pose):
         for ji, jval in enumerate(joint_pose):

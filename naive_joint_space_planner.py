@@ -541,6 +541,7 @@ class NaivePlanner(object):
             total_calc_cost_time += calc_cost_time
             total_sim_time += sim_time
             total_process_sim_time += process_sim_time
+            print("expansion_sim_time: %.2f" % sim_time)
 
             # print("time: %.3f" % (time.time() - start_time))
 
