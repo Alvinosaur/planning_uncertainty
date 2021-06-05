@@ -185,6 +185,7 @@ class Environment(object):
         bottle pose and arm joint poise. Specify some action to take. Generates a joint-space trajectory
         for lower-level simulation function to execute.
         """
+        start_time = time.time()
         if state.joints is None:  # use arm's current joint state
             state.joints = self.arm.joint_pose
 
@@ -195,16 +196,19 @@ class Environment(object):
         bottle_pos = state.bottle_pos
         bottle_ori = state.bottle_ori
 
-        return self.simulate_plan(joint_traj=joint_traj,
-                                  start_bottle_pos=bottle_pos, start_bottle_ori=bottle_ori,
-                                  sim_params=sim_params)
+        results = self.simulate_plan(joint_traj=joint_traj,
+                                     start_bottle_pos=bottle_pos, start_bottle_ori=bottle_ori,
+                                     sim_params=sim_params)
+        end_time = time.time()
+        print("run_sim: %.4f" % (end_time - start_time))
+        return results
 
     def reset(self):
-        pass
-        # p.resetSimulation()
-        # p.setGravity(0, 0, self.GRAVITY)
-        # p.loadURDF(self.plane_urdf_filepath, basePosition=[0, 0, 0])
-        # self.arm.kukaId = p.loadURDF(self.arm_filepath, basePosition=[0, 0, 0])
+        # pass
+        p.resetSimulation()
+        p.setGravity(0, 0, self.GRAVITY)
+        p.loadURDF(self.plane_urdf_filepath, basePosition=[0, 0, 0])
+        self.arm.kukaId = p.loadURDF(self.arm_filepath, basePosition=[0, 0, 0])
 
     def command_new_pose(self, joint_pose):
         for ji, jval in enumerate(joint_pose):
