@@ -137,6 +137,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             print("New Test with params: %s" % exec_params, flush=True)
             is_fallen, is_success, _, _ = run_policy(planner, env, policy, exec_params,
                                                      break_on_fail=True, visualize=visualize)
+            env.reset()
             print("Exec #%d: fell: %d, success: %d" %
                   (exec_i, is_fallen, is_success), flush=True)
             print()

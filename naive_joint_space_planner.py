@@ -290,6 +290,7 @@ class NaivePlanner(object):
         num_expansions = 0
         num_full_evals = 0
         num_lazy_evals = 0
+        invalid_count = 0
 
         # find solution
         goal_expanded = False
@@ -302,7 +303,6 @@ class NaivePlanner(object):
         start_total_time = time.time()
         while not goal_expanded and len(open_set) > 0:
             start = time.time()
-            num_expansions += 1
 
             # get next state to expand
             n = heapq.heappop(open_set)
@@ -312,12 +312,14 @@ class NaivePlanner(object):
             if state_key in closed_set:
                 continue
 
+            num_expansions += 1
+
             bottle_ori = n.bottle_ori
             cur_joints = self.joint_pose_from_state(state)
             bottle_pos = self.bottle_pos_from_state(state)
             cur_state_tuple = StateTuple(bottle_pos=bottle_pos, bottle_ori=bottle_ori, joints=cur_joints)
 
-            if self.lazy and n.is_fully_evaluated:
+            if not self.lazy or (self.lazy and n.is_fully_evaluated):
                 closed_set.add(state_key)
 
                 # check if found goal, if so loop will terminate in next iteration
@@ -353,23 +355,38 @@ class NaivePlanner(object):
                     # print(np.array2string(action[0], precision=2))
 
                     # N = 1 only use one simulation parameter set
-                    (is_fallen, _, next_bottle_pos,
-                     next_bottle_ori, next_joint_pose, z_ang_mean) = self.sim_func(
-                        action=action, state=cur_state_tuple,
-                        sim_params=self.single_param)
+                    if self.lazy or self.sim_mode == SINGLE:
+                        (is_fallen, _, next_bottle_pos,
+                         next_bottle_ori, next_joint_pose, z_ang_mean) = self.sim_func(
+                            action=action, state=cur_state_tuple,
+                            sim_params=self.single_param)
 
-                    num_lazy_evals += 1
+                        mode_sim_param = self.single_param
+                        invalid = is_fallen
+                        fall_history = [is_fallen]
+                        fall_prob = 1 if is_fallen else 0
+                        pos_variance = 0
+                        z_ang_variance = 0
 
-                    mode_sim_param = self.single_param
-                    invalid = is_fallen
-                    fall_history = [is_fallen]
-                    fall_prob = 1 if is_fallen else 0
-                    pos_variance = 0
-                    z_ang_variance = 0
+                        num_lazy_evals += 1
+
+                    else:
+                        results = self.sim_func(
+                            action=action, state=cur_state_tuple,
+                            sim_params_set=self.sim_params_set)
+
+                        (fall_prob, pos_variance, z_ang_variance, z_ang_mean, fall_history, next_bottle_pos,
+                         next_bottle_ori, next_joint_pose, mode_sim_param) = (
+                            self.process_multiple_sim_results(results, self.sim_params_set))
+
+                        num_full_evals += 1
+
+                        invalid = fall_prob > self.fall_thresh
 
                     # completely ignore actions that knock over bottle with high
                     # probability
                     if invalid:
+                        invalid_count += 1
                         continue
 
                     start = time.time()
@@ -435,6 +452,7 @@ class NaivePlanner(object):
                         print("     ", np.array2string(np.array(next_bottle_ori), precision=2),
                               "%.2f" % Bottle.calc_vert_angle(next_bottle_ori))
                         heapq.heappush(open_set, new_node)
+                        transitions[next_state_key] = (ai, n)
                         # print("%s -> %s" % (self.state_to_str(state), self.state_to_str(next_state)))
 
                     end = time.time()
@@ -464,6 +482,7 @@ class NaivePlanner(object):
                 # completely ignore actions that knock over bottle with high
                 # probability
                 if invalid:
+                    invalid_count += 1
                     continue
 
                 if next_state_key in closed_set:
@@ -546,6 +565,10 @@ class NaivePlanner(object):
               (num_expansions, goal_expanded))
         print("Num full evaluations: %d" % num_full_evals)
         print("Num lazy evaluations: %d" % num_lazy_evals)
+
+        print("invalid count: %d")
+        print("Total evaluations: %d" % (num_lazy_evals + num_full_evals))
+        print("invalid rate: %.3f" % (invalid_count / (num_lazy_evals + num_full_evals)))
         if not goal_expanded:
             print("path reverse time: %.2f" % 0.0)
             return [], [], []
