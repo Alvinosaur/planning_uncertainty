@@ -157,7 +157,7 @@ class Environment(object):
     def change_bottle_pos(self, new_pos):
         self.bottle.start_pos = new_pos
 
-    def run_multiple_sims(self, action, sim_params_set: T.List[EnvParams],
+    def run_multiple_sims(self, sim_params_set: T.List[EnvParams], action,
                           state: StateTuple):
         """
         Simply run multiple simulations with different bottle parameters.
@@ -178,7 +178,7 @@ class Environment(object):
 
         return all_results
 
-    def run_sim(self, action: T.Tuple, sim_params: EnvParams,
+    def run_sim(self, sim_params: EnvParams, action: T.Tuple,
                 state: StateTuple) -> SimResults:
         """
         High-level interface with simulator: run simulation given some current state composed of
@@ -290,7 +290,7 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
-                # time.sleep(0.001)
+                time.sleep(0.001)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory
@@ -349,63 +349,6 @@ class Environment(object):
         return SimResults(is_fallen=is_fallen, is_collision=is_collision and not no_movement,
                           bottle_pos=self.bottle.pos, bottle_ori=self.bottle.ori,
                           joint_pose=self.arm.joint_pose, z_rot_ang=z_rot_ang)
-
-    def simulate_plan_online(self, init_joints, policy, bottle_pos, bottle_ori, sim_params: EnvParams):
-        """Run simulation with given joint-space trajectory. Does not reset arm
-        joint angles after simulation is done, so that value can be guaranteed to be untouched.
-
-        Arguments:
-            joint_traj {[type]} -- N x num_dof trajectory of joints
-
-        Returns:
-            [type] -- [description]
-        """
-        # create new bottle object with parameters set beforehand
-        self.reset()
-        self.bottle.set_fill_proportion(sim_params.bottle_fill)
-        self.bottle.lat_fric = sim_params.bottle_fric
-        if bottle_pos is not None:
-            self.bottle.create_sim_bottle(bottle_pos, ori=bottle_ori)
-        else:
-            self.bottle.create_sim_bottle(ori=bottle_ori)
-
-        # start arm planned motion
-        self.arm.reset(init_joints)
-        executed_traj = []
-        for (dq_vec, num_iters) in policy:
-            target_joints = self.arm.joint_pose + dq_vec
-
-            joint_traj = np.linspace(
-                start=self.arm.joint_pose, stop=target_joints, num=num_iters)
-            assert (len(joint_traj) == num_iters)
-
-            for i in range(num_iters):
-                next_joints = joint_traj[i, :]
-
-                self.command_new_pose(next_joints)
-                # print(np.concatenate([self.bottle.pos, self.arm.joint_pose]))
-
-                # run one sim iter
-                p.stepSimulation()
-                self.arm.update_joint_pose()
-
-                if self.is_viz:
-                    time.sleep(0.002)
-
-            self.bottle.update_pose()
-
-            state = np.concatenate([self.bottle.pos, self.arm.joint_pose])
-            executed_traj.append(state)
-
-        # generate cost and final position
-        self.bottle.update_pose()
-        is_fallen, z_rot_ang = self.check_bottle_fallen(ori=self.bottle.ori)
-
-        # remove bottle object, can't just reset pos since need to change params each iter
-        p.removeBody(self.bottle.bottle_id)
-
-        # , executed_traj
-        return is_fallen, True, self.bottle.pos, self.bottle.ori, self.arm.joint_pose, executed_traj
 
     def check_bottle_fallen(self, ori):
         angle = self.bottle.calc_vert_angle(ori)
