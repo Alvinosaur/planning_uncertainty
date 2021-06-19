@@ -69,6 +69,8 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         s += "Joints(" + ",".join(["%.3f" % v for v in cur_joints]) + "), "
         print(s)
 
+        print("Action: %s" % np.array2string(policy[step][0], precision=3))
+
         dist_bottle_to_goal = np.linalg.norm(cur_bottle_pos[:2] - bottle_goal[:2])
         print("Bottle dist %.3f ? %.3f (thresh)" % (dist_bottle_to_goal, planner.sim_dist_thresh))
 
@@ -118,6 +120,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             print("time taken: NA", flush=True)
 
     else:
+        print("Replaying results!")
         try:
             results = np.load("%s.npz" % res_fname, allow_pickle=True)
         except Exception as e:
@@ -261,6 +264,7 @@ def main():
         raise Exception("Need to specify planner type with --single or --avg")
 
     if args.replay_results:
+        assert args.replay_dir
         planner_folder = args.replay_dir
     else:
         planner_folder = f"{plan_type}_{sample_strat}" + sub_dir
@@ -364,7 +368,7 @@ def main():
             plan_params_sets += env.gen_random_env_param_set(
                 num=num_low_fric)
 
-        else:
+        else:  # DEFAULT
             # unimodal at medium friction
             env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.high_fric_max)
             plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
@@ -400,16 +404,25 @@ def main():
         else:
             if args.exec_low_fric:
                 env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
-                exec_params_set = env.gen_random_env_param_set(num=1)
+                exec_params_set = env.gen_random_env_param_set(num=args.num_exec)
                 print("Executing with LOW friction: %s" % exec_params_set[0])
             elif args.exec_high_fric:
                 env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
-                exec_params_set = env.gen_random_env_param_set(num=1)
+                exec_params_set = env.gen_random_env_param_set(num=args.num_exec)
                 print("Executing with HIGH friction: %s" % exec_params_set[0])
             elif args.exec_med_fric:
                 env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
-                exec_params_set = env.gen_random_env_param_set(num=1)
+                exec_params_set = env.gen_random_env_param_set(num=args.num_exec)
                 print("Executing with MEDIUM friction: %s" % exec_params_set[0])
+            elif args.exec_all_fric:
+                env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
+                exec_params_set = env.gen_random_env_param_set(num=(args.num_exec // 3))
+
+                env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
+                exec_params_set += env.gen_random_env_param_set(num=(args.num_exec // 3 + args.num_exec % 3))
+
+                env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
+                exec_params_set += env.gen_random_env_param_set(num=(args.num_exec // 3))
             else:
                 print("Using default loaded execution params")
 

@@ -122,11 +122,6 @@ class NaivePlanner(object):
         # Costs and weights
         self.dist_cost_weights = np.array([3, 3, 2])  # x, y, z
         self.use_ee_trans_cost = use_ee_trans_cost
-        self.pos_var_w = 30
-        self.ang_var_w = 30
-        self.move_cost_w = 0.01
-        # self.time_cost_weight = 0.025  # chosen since avg EE dist moved cost is 0.05
-        # and time_cost_weight at most will be scaled by 2
 
         # define action space
         self.da = da_rad
@@ -240,8 +235,6 @@ class NaivePlanner(object):
         [bpos, bori, next_joint_pos, count] = bpos_bins[max_key]
         # mode_sim_param = sum(sim_params_bins[max_key]) / len(sim_params_bins[max_key])
         mode_sim_param = ['%.3f' % param.bottle_fric for param in sim_params_bins[max_key]]
-        # print(bpos_bins[max_key][-1])
-        # print(self.state_to_str(bpos), self.state_to_str(bori))
 
         # calculate variance
         pos_variance = np.sum(np.var(all_bpos, axis=0))  # sum of variance of each dimension (x, y, z)
@@ -365,9 +358,6 @@ class NaivePlanner(object):
                         invalid = is_fallen
                         fall_history = [is_fallen]
                         fall_prob = 1 if is_fallen else 0
-                        pos_variance = 0
-                        z_ang_variance = 0
-
                         num_lazy_evals += 1
 
                     else:
@@ -375,7 +365,7 @@ class NaivePlanner(object):
                             action=action, state=cur_state_tuple,
                             sim_params_set=self.sim_params_set)
 
-                        (fall_prob, pos_variance, z_ang_variance, z_ang_mean, fall_history, next_bottle_pos,
+                        (fall_prob, _, _, _, fall_history, next_bottle_pos,
                          next_bottle_ori, next_joint_pose, mode_sim_param) = (
                             self.process_multiple_sim_results(results, self.sim_params_set))
 
@@ -394,11 +384,7 @@ class NaivePlanner(object):
                         next_joint_pose)
 
                     move_cost = self.calc_move_cost(n, new_arm_positions)
-                    trans_cost = self.calc_trans_cost(move_cost=move_cost,
-                                                      pos_variance=pos_variance,
-                                                      z_ang_variance=z_ang_variance)
-                    # trans_cost += z_ang_mean
-                    # self.time_cost_weight * self.A.get_action_time_cost(action))
+                    trans_cost = self.calc_trans_cost(move_cost=move_cost)
 
                     # build next state and check if already expanded
                     next_state = np.concatenate([next_bottle_pos, next_joint_pose])
@@ -412,15 +398,7 @@ class NaivePlanner(object):
                     # Quick FIX: use EE for transition costs so set nn_joint to EE
                     # still true b/c midpoints + joints, so last item is still last joint (EE)
                     bottle_goal_dist, arm_goal_dist = self.dist_to_goal(next_state, nn_joint_pos)
-                    print("     ai[%d] bottle-goal, arm-bottle: %.3f, %.3f" % (
-                        ai,
-                        bottle_goal_dist - n.bottle_goal_dist,
-                        arm_bottle_dist - n.arm_bottle_dist))
                     h = self.heuristic(bottle_goal_dist, arm_bottle_dist, arm_goal_dist)
-                    print("     ai[%d] delta h: %.3f, costs: %.3f, %.3f, %.3f, %.3f" % (
-                        ai, self.eps * (h - n.h), self.move_cost_w * move_cost,
-                        self.pos_var_w * pos_variance, self.ang_var_w * z_ang_variance,
-                        z_ang_mean))
                     new_G = cur_cost + trans_cost
 
                     end = time.time()
@@ -492,11 +470,7 @@ class NaivePlanner(object):
                     next_joint_pose)
 
                 move_cost = self.calc_move_cost(n, new_arm_positions)
-                trans_cost = self.calc_trans_cost(move_cost=move_cost,
-                                                  pos_variance=pos_variance,
-                                                  z_ang_variance=z_ang_variance)
-                # trans_cost += z_ang_mean
-                # self.time_cost_weight * self.A.get_action_time_cost(action))
+                trans_cost = self.calc_trans_cost(move_cost=move_cost)
 
                 # build next state and check if already expanded
                 next_state = np.concatenate([next_bottle_pos, next_joint_pose])
@@ -508,15 +482,7 @@ class NaivePlanner(object):
                 # Quick FIX: use EE for transition costs so set nn_joint to EE
                 # still true b/c midpoints + joints, so last item is still last joint (EE)
                 bottle_goal_dist, arm_goal_dist = self.dist_to_goal(next_state, nn_joint_pos)
-                print("     **lazy** ai[%d] bottle-goal, arm-bottle: %.3f, %.3f" % (
-                    prev_ai,
-                    bottle_goal_dist - n.bottle_goal_dist,
-                    arm_bottle_dist - n.arm_bottle_dist))
                 h = self.heuristic(bottle_goal_dist, arm_bottle_dist, arm_goal_dist)
-                print("     **lazy** ai[%d] delta h: %.3f, costs: %.3f, %.3f, %.3f, %.3f" % (
-                    prev_ai, self.eps * (h - n.h), self.move_cost_w * move_cost,
-                    self.pos_var_w * pos_variance, self.ang_var_w * z_ang_variance,
-                    z_ang_mean))
                 cur_cost = self.G[self.state_to_key(prev_n.state)]
                 new_G = cur_cost + trans_cost
 
@@ -652,12 +618,8 @@ class NaivePlanner(object):
         #
         # return min_dist, min_i, min_pos
 
-    def calc_trans_cost(self, move_cost, pos_variance, z_ang_variance):
-        # z_ang_variance = 70 * (z_ang_variance / self.max_ang_var)
-        # pos_variance = 20 * (pos_variance / self.max_pos_var)
-        # fall_prob = 10 * fall_prob
-        # move_cost = 0.5 * (move_cost / self.max_move_dist)
-        return self.move_cost_w * move_cost  # + self.pos_var_w * pos_variance + self.ang_var_w * z_ang_variance
+    def calc_trans_cost(self, move_cost):
+        return self.move_cost_w * move_cost
 
     def calc_move_cost(self, n: Node, new_arm_positions):
         if self.use_ee_trans_cost:

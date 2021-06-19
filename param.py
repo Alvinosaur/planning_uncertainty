@@ -18,6 +18,7 @@ def parse_arguments():
     parser.add_argument('--use_replan', action="store_true")
 
     # Planner Agnostic  simulate_prev
+    parser.add_argument('--num_exec', action="store", type=int, default="20")
     parser.add_argument('--use_ee_trans_cost', action="store", type=bool, default="true")
     parser.add_argument('--max_time', action="store", type=int, default="60",
                         help="Single planner planning time limit (sec), mulitplied by N for average planner.")
@@ -42,6 +43,7 @@ def parse_arguments():
     parser.add_argument('--exec_low_fric', action="store_true")
     parser.add_argument('--exec_high_fric', action="store_true")
     parser.add_argument('--exec_med_fric', action="store_true")
+    parser.add_argument('--exec_all_fric', action="store_true")
 
     # Avg Planner
     parser.add_argument('--fall_thresh', action="store", type=float, default="0")

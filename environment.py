@@ -290,7 +290,7 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
-                time.sleep(0.001)
+                time.sleep(0.003)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory

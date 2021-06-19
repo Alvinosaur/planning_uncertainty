@@ -15,14 +15,24 @@ remove_time: 0.00001
 """
 
 
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='Planning Uncertainty Parse Parameters')
+    parser.add_argument('--results_dir', action="store", type=str, default="")
+    parser.add_argument('--redirect_stdout', action="store_true")
+    args = parser.parse_args()
+
+    return args
+
+
 def get_sum_avg(text, name):
     findings = re.findall(f"{name}: (\d+.\d+)", text)
     times = [float(v) for v in findings]
     return sum(times), sum(times) / len(times)
 
 
+args = parse_arguments()
 with open(
-        "/home/alvin/research/planning_uncertainty/single_bimodal/2021-06-05@14:14:12.685493/plan_output.txt",
+        os.path.join(args.results_dir, "plan_output.txt"),
         "r") as f:
     text = f.read()
     sim_reset, sim_reset_avg = get_sum_avg(text, "sim_reset")
@@ -60,8 +70,8 @@ with open(
     total_evals = num_full_evals + num_lazy_evals
     print(np.average(total_evals))
 
-    print("Average planning time: %.3f" % np.average(total_times))
-    print("Average time per state expanded * 1000: %.3f" % np.average((total_times / total_evals) * 1000))
+    print("Average planning time: %.2f" % np.average(total_times))
+    print("Average time per state expanded * 1000: %.2f" % np.average((total_times / total_evals) * 1000))
 
     print("run_sim: %.3f" % run_sim_avg)
     print("sim_reset: %.3f" % sim_reset_avg)
@@ -77,7 +87,7 @@ with open(
     num_results = 11
     avg_path_length = 0
     for i in range(num_results):
-        fname = "/home/alvin/research/planning_uncertainty/single_bimodal/2021-06-05@14:14:12.685493/results_%d.npz" % i
+        fname = os.path.join(args.results_dir, "results_%d.npz" % i)
         try:
             results = np.load("%s" % fname, allow_pickle=True)
         except:
