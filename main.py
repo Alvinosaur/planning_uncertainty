@@ -14,7 +14,7 @@ import re
 from param import parse_arguments
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace, EnvParams, StateTuple
-from naive_joint_space_planner import NaivePlanner, SINGLE, AVG
+from naive_joint_space_planner import NaivePlanner
 import helpers
 
 # Constants and Enums
@@ -72,7 +72,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         print("Action: %s" % np.array2string(policy[step][0], precision=3))
 
         dist_bottle_to_goal = np.linalg.norm(cur_bottle_pos[:2] - bottle_goal[:2])
-        print("Bottle dist %.3f ? %.3f (thresh)" % (dist_bottle_to_goal, planner.sim_dist_thresh))
+        print("Bottle dist %.3f ? %.3f (thresh)" % (dist_bottle_to_goal, planner.dist_thresh))
 
         state_tuple = StateTuple(bottle_pos=cur_bottle_pos, bottle_ori=cur_bottle_ori,
                                  joints=cur_joints)
@@ -244,30 +244,13 @@ def main():
     arg_str = json.dumps(argparse_dict, indent=4)
     print(arg_str)
 
-    # Parsing planner type
-    if args.bimodal:
-        sample_strat = BIMODAL
-    elif args.high_fric:
-        sample_strat = HIGH_FRIC
-    else:
-        sample_strat = DEFAULT
-
-    if args.single:
-        plan_type = SINGLE
-        sub_dir = "/%s" % date_time_str
-
-    elif args.avg:
-        plan_type = AVG
-        fall_thresh = args.fall_thresh
-        sub_dir = "/%s_fall_thresh_%.2f" % (date_time_str, fall_thresh)
-    else:
-        raise Exception("Need to specify planner type with --single or --avg")
+    sub_dir = "/%s_fall_thresh_%.2f_var_thresh_%.3f" % (date_time_str, args.fall_thresh, args.var_thresh)
 
     if args.replay_results:
         assert args.replay_dir
         planner_folder = args.replay_dir
     else:
-        planner_folder = f"{plan_type}_{sample_strat}" + sub_dir
+        planner_folder = "custom_beta" + sub_dir
         if not os.path.exists(planner_folder):
             os.makedirs(planner_folder)
 
@@ -346,32 +329,19 @@ def main():
                 single_param = env.gen_random_env_param_set(num=1)[0]
 
     else:
-        print(f"Sampling {sample_strat} distribution")
-        # unimodal high friction
-        if sample_strat == HIGH_FRIC:
-            env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
-            plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
+        print(f"Sampling trimodal distribution")
+        env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
+        plan_params_sets = env.gen_random_env_param_set(num=(args.n_sims // 3))
 
-        # bimodal low and high friction with mode being high friction
-        elif sample_strat == BIMODAL:
-            # Sample 3/4 from high friction distribution since mode simulation
-            # results needs to be high friction to be more conservative and avoid
-            # avoid knocking bottle over
-            num_high_fric = int(args.n_sims * 3 / 4.)
-            num_low_fric = args.n_sims - num_high_fric
-            env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
-            plan_params_sets = env.gen_random_env_param_set(
-                num=num_high_fric)
+        env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
+        plan_params_sets += env.gen_random_env_param_set(num=(args.n_sims // 3 + args.n_sims % 3))
 
-            # Sample 1/4 from low friction distribution
-            env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
-            plan_params_sets += env.gen_random_env_param_set(
-                num=num_low_fric)
+        env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
+        plan_params_sets += env.gen_random_env_param_set(num=(args.n_sims // 3))
 
-        else:  # DEFAULT
-            # unimodal at medium friction
-            env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.high_fric_max)
-            plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
+        # # unimodal at medium friction
+        # env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.high_fric_max)
+        # plan_params_sets = env.gen_random_env_param_set(num=args.n_sims)
 
         assert (len(plan_params_sets) == args.n_sims)
 
@@ -389,13 +359,10 @@ def main():
             env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
             single_param = env.gen_random_env_param_set(num=1)[0]
 
-        elif args.single_med_fric:
+        else:
             print("Manually forcing single planner to use MEDIUM friction")
             env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
             single_param = env.gen_random_env_param_set(num=1)[0]
-
-        else:
-            single_param = None
 
         # Possibly specify a specific exec_param to run
         if args.exec_param != -1:
@@ -414,7 +381,7 @@ def main():
                 env.set_distribs(min_fric=bottle.low_fric_max, max_fric=bottle.high_fric_min)
                 exec_params_set = env.gen_random_env_param_set(num=args.num_exec)
                 print("Executing with MEDIUM friction: %s" % exec_params_set[0])
-            elif args.exec_all_fric:
+            else:  # args.exec_all_fric:
                 env.set_distribs(min_fric=bottle.low_fric_min, max_fric=bottle.low_fric_max)
                 exec_params_set = env.gen_random_env_param_set(num=(args.num_exec // 3))
 
@@ -423,8 +390,6 @@ def main():
 
                 env.set_distribs(min_fric=bottle.high_fric_min, max_fric=bottle.high_fric_max)
                 exec_params_set += env.gen_random_env_param_set(num=(args.num_exec // 3))
-            else:
-                print("Using default loaded execution params")
 
     # save all parameters used
     if not args.replay_results:
@@ -438,13 +403,11 @@ def main():
 
     # Create planner
     da_rad = args.dtheta * math.pi / 180.
-    planner = NaivePlanner(env=env, sim_mode=plan_type, sim_params_set=plan_params_sets,
+    planner = NaivePlanner(env=env, sim_params_set=plan_params_sets,
                            dist_thresh=args.goal_thresh, eps=args.eps, da_rad=da_rad,
                            dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
                            fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost,
-                           sim_type=args.sim_type,
-                           sim_dist_thresh=args.sim_dist_thresh, single_param=single_param,
-                           lazy=args.lazy)
+                           single_param=single_param, var_thresh=args.var_thresh)
 
     print("plan_params_sets:")
     for param in plan_params_sets:

@@ -10,10 +10,6 @@ def parse_arguments():
     parser.add_argument('--replay_dir', action="store", type=str)
     parser.add_argument('--redirect_stdout', action="store_true")
 
-    # Type of planner
-    parser.add_argument('--single', action="store_true")
-    parser.add_argument('--avg', action="store_true")
-
     # Replanning after execution
     parser.add_argument('--use_replan', action="store_true")
 
@@ -47,10 +43,8 @@ def parse_arguments():
 
     # Avg Planner
     parser.add_argument('--fall_thresh', action="store", type=float, default="0")
+    parser.add_argument('--var_thresh', action="store", type=float, default="0.02")
     parser.add_argument('--n_sims', action="store", type=int, default="10")
-    # Avg Planner Sampling Strategy
-    parser.add_argument('--bimodal', action="store_true")
-    parser.add_argument('--high_fric', action="store_true")
 
     # Single Planner
     parser.add_argument('--single_low_fric', action="store_true",
@@ -59,12 +53,6 @@ def parse_arguments():
                         help="Single planner to use manually-specified high friction")
     parser.add_argument('--single_med_fric', action="store_true",
                         help="Single planner to use manually-specified medium friction")
-
-    # Experimental
-    # possible options: always_N, always_1, far_N, close_N
-    parser.add_argument('--sim_type', action="store", type=str, default="always_N")
-    parser.add_argument('--sim_dist_thresh', action="store", type=float, default="0.25")
-    parser.add_argument('--lazy', action="store_true")
 
     args = parser.parse_args()
 

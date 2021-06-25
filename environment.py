@@ -337,13 +337,13 @@ class Environment(object):
         end = time.time()
         remove_time = end - start
 
-        print("sim_reset: %.5f" % sim_reset)
-        print("command: %.5f" % command)
-        print("setup_objects: %.5f" % setup_objects)
-        print("step_sim: %.5f" % step_sim)
-        print("collision_time: %.5f" % collision_time)
-        print("check_bottle_state: %.5f" % (check_bottle_state + check_bottle_fall))
-        print("remove_time: %.5f" % remove_time)
+        # print("sim_reset: %.5f" % sim_reset)
+        # print("command: %.5f" % command)
+        # print("setup_objects: %.5f" % setup_objects)
+        # print("step_sim: %.5f" % step_sim)
+        # print("collision_time: %.5f" % collision_time)
+        # print("check_bottle_state: %.5f" % (check_bottle_state + check_bottle_fall))
+        # print("remove_time: %.5f" % remove_time)
 
         # , executed_traj
         return SimResults(is_fallen=is_fallen, is_collision=is_collision and not no_movement,

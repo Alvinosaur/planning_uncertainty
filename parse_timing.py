@@ -26,8 +26,8 @@ def parse_arguments():
 
 def get_sum_avg(text, name):
     findings = re.findall(f"{name}: (\d+.\d+)", text)
-    times = [float(v) for v in findings]
-    return sum(times), sum(times) / len(times)
+    values = [float(v) for v in findings]
+    return sum(values), sum(values) / len(values)
 
 
 args = parse_arguments()
@@ -35,15 +35,6 @@ with open(
         os.path.join(args.results_dir, "plan_output.txt"),
         "r") as f:
     text = f.read()
-    sim_reset, sim_reset_avg = get_sum_avg(text, "sim_reset")
-    run_sim, run_sim_avg = get_sum_avg(text, "run_sim")
-    command, command_avg = get_sum_avg(text, "command")
-    setup_objects, setup_objects_avg = get_sum_avg(text, "setup_objects")
-    step_sim, step_sim_avg = get_sum_avg(text, "step_sim")
-    collision_time, collision_time_avg = get_sum_avg(text, "collision_time")
-    check_bottle_state, check_bottle_state_avg = get_sum_avg(text, "check_bottle_state")
-    remove_time, remove_time_avg = get_sum_avg(text, "remove_time")
-    sim_time, sim_time_avg = get_sum_avg(text, "expansion_sim_time")
 
     findings = re.findall(f"Total time: (\d+.\d+)", text)
     total_times = np.array([float(v) for v in findings])
@@ -70,18 +61,38 @@ with open(
     total_evals = num_full_evals + num_lazy_evals
     print(np.average(total_evals))
 
+    try:
+        findings = re.findall(f"Alpha: (\d+), beta: (\d+)", text)
+        alphas = [int(v[0]) for v in findings]
+        betas = [int(v[1]) for v in findings]
+        avg_alpha = sum(alphas) / len(alphas)
+        avg_beta = sum(betas) / len(betas)
+        print("Alpha (%.2f) and Beta (%.2f)" % (avg_alpha, avg_beta))
+    except Exception as e:
+        print(e)
+        pass
+
     print("Average planning time: %.2f" % np.average(total_times))
     print("Average time per state expanded * 1000: %.2f" % np.average((total_times / total_evals) * 1000))
 
-    print("run_sim: %.3f" % run_sim_avg)
-    print("sim_reset: %.3f" % sim_reset_avg)
-    print("command: %.3f" % command_avg)
-    print("setup_objects: %.3f" % setup_objects_avg)
-    print("step_sim: %.3f" % step_sim_avg)
-    print("collision_time: %.3f" % collision_time_avg)
-    print("check_bottle_state: %.3f" % check_bottle_state_avg)
-    print("remove_time: %.3f" % remove_time_avg)
-    print("expansion_sim_time: %.3f" % sim_time_avg)
+    # sim_reset, sim_reset_avg = get_sum_avg(text, "sim_reset")
+    # run_sim, run_sim_avg = get_sum_avg(text, "run_sim")
+    # command, command_avg = get_sum_avg(text, "command")
+    # setup_objects, setup_objects_avg = get_sum_avg(text, "setup_objects")
+    # step_sim, step_sim_avg = get_sum_avg(text, "step_sim")
+    # collision_time, collision_time_avg = get_sum_avg(text, "collision_time")
+    # check_bottle_state, check_bottle_state_avg = get_sum_avg(text, "check_bottle_state")
+    # remove_time, remove_time_avg = get_sum_avg(text, "remove_time")
+    # sim_time, sim_time_avg = get_sum_avg(text, "expansion_sim_time")
+    # print("run_sim: %.3f" % run_sim_avg)
+    # print("sim_reset: %.3f" % sim_reset_avg)
+    # print("command: %.3f" % command_avg)
+    # print("setup_objects: %.3f" % setup_objects_avg)
+    # print("step_sim: %.3f" % step_sim_avg)
+    # print("collision_time: %.3f" % collision_time_avg)
+    # print("check_bottle_state: %.3f" % check_bottle_state_avg)
+    # print("remove_time: %.3f" % remove_time_avg)
+    # print("expansion_sim_time: %.3f" % sim_time_avg)
 
     count = 0
     num_results = 11
