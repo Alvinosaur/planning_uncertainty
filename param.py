@@ -12,17 +12,19 @@ def parse_arguments():
     parser.add_argument('--load_params', action="store_true")
     parser.add_argument('--save_global_params', action="store_true")
     parser.add_argument('--params_path', action="store", type=str, default="")
+    parser.add_argument('--save_edge_betas', action="store_true")  # save data for learned alpha, beta priors
 
     # Type of planner
     parser.add_argument('--single', action="store_true")
     parser.add_argument('--full', action="store_true")
     parser.add_argument('--lazy', action="store_true")
+    parser.add_argument('--beta', action="store_true")
 
     # Replanning after execution
     parser.add_argument('--use_replan', action="store_true")
 
     # Planning Details
-    parser.add_argument('--fall_thresh', action="store", type=float, default="0.2")
+    parser.add_argument('--fall_thresh', action="store", type=float, default="0.1")
     parser.add_argument('--beta_var_thresh', action="store", type=float, default="0.02")
 
     # Simulation Parameters
@@ -45,6 +47,9 @@ def parse_arguments():
     parser.add_argument('--goal_thresh', action="store", type=float, default="0.13")
     parser.add_argument('--dtheta', action="store", type=int, default="8")
     parser.add_argument('--eps', action="store", type=float, default="7")
+
+    # Generate random start-goal files
+    parser.add_argument('--start_goal_fname', action="store", type=str)
 
     # DEBUG:
     # Optionally specify specific start-goal pairs or even index of a solved path

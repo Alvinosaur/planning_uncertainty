@@ -14,32 +14,13 @@ import re
 from param import parse_arguments
 from sim_objects import Bottle, Arm
 from environment import Environment, ActionSpace, EnvParams, StateTuple
-from naive_joint_space_planner import NaivePlanner, SINGLE, CUSTOM, LAZY, FULL
+from naive_joint_space_planner import NaivePlanner, SINGLE, BETA, LAZY, FULL, TYPE_TO_NAME
 import helpers
 
 # Constants and Enums
 DEG2RAD = math.pi / 180.0
 RAD2DEG = 1 / DEG2RAD
 GRAVITY = -9.81
-BIMODAL = "bimodal"
-HIGH_FRIC = "high_fric"
-DEFAULT = "default"
-
-"""
-Useful Commands:
-Run planning on single planner using pre-generated simulation parameters:
-$ python main.py --single --single_low_fric --load_params --num_plan_sims 20 --redirect_stdout
-
-Avg planning:
-$ python main.py --avg --high_fric --num_plan_sims 10 --redirect_stdout --fall_thresh 0.1
-
-Execute the plan generated above:
-$ python main.py --single --single_low_fric --load_params --num_plan_sims 20 \
---redirect_stdout --replay_results --replay_dir <path/to/directory/with/results>
-
-Parse output of execution and planning steps above to calculate some statistics:
-$ python parse_results.py --results_dir --redirect_stdout <path/to/directory/with/results>
-"""
 
 
 def run_policy(planner: NaivePlanner, env: Environment, policy,
@@ -55,13 +36,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
 
     print(exec_params)
     for step in range(len(policy)):
-        if visualize:
-            env.goal_line_id = env.draw_line(
-                lineFrom=bottle_goal,
-                lineTo=bottle_goal + np.array([0, 0, 1]),
-                lineColorRGB=[0, 0, 1], lineWidth=1,
-                replaceItemUniqueId=None,
-                lifeTime=0)
+        planner.check_visualize()
 
         s = "[%d]: " % step
         s += "Bpos(" + ",".join(["%.2f" % v for v in cur_bottle_pos]) + "), "
@@ -79,13 +54,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints, _ = (
             env.run_sim(state=state_tuple, action=policy[step], sim_params=exec_params)
         )
-        if visualize:
-            env.goal_line_id = env.draw_line(
-                lineFrom=bottle_goal,
-                lineTo=bottle_goal + np.array([0, 0, 1]),
-                lineColorRGB=[0, 0, 1], lineWidth=1,
-                replaceItemUniqueId=None,
-                lifeTime=0)
+        planner.check_visualize()
         is_fallen |= step_is_fallen
         executed_traj.append(
             planner.format_state(bottle_pos=cur_bottle_pos, joints=cur_joints))
@@ -100,10 +69,12 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
 def piecewise_execution(planner: NaivePlanner, env: Environment,
                         exec_params_set: t.List[EnvParams],
                         replay_results,
-                        res_fname,
+                        directory,
+                        start_goal_idx,
                         visualize,
                         max_time_s,
                         cur_bottle_ori=np.array([0, 0, 0, 1])):
+    res_fname = "%s/results_%d" % (directory, start_goal_idx)
     if not replay_results:
         start_time = time.time()
         try:
@@ -115,9 +86,17 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             print("Saving plan to %s" % res_fname, flush=True)
             np.savez("%s" % res_fname,
                      state_path=state_path, policy=policy, node_path=node_path)
+            return True
 
         except helpers.TimeoutException:
-            print("time taken: NA", flush=True)
+            print("end: %.1f, start: %.1f, num_expand: %d" % (time.time(), start_time, planner.num_expansions),
+                  flush=True)
+            if planner.save_edge_betas:
+                np.savez("%s" % "%s/edge_data_%d" % (directory, start_goal_idx),
+                         states=np.vstack(planner.edge_beta_states),
+                         actions=np.vstack(planner.edge_beta_actions),
+                         values=np.vstack(planner.edge_beta_values))
+            return False
 
     else:
         print("Replaying results!")
@@ -125,14 +104,17 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             results = np.load("%s.npz" % res_fname, allow_pickle=True)
         except Exception as e:
             print("Results: %s not found! due to %s" % (res_fname, e))
-            return
+            return False
 
         policy = results["policy"]
         state_path = results["state_path"]
         node_path = results["node_path"]
+        planner.start = node_path[0].state
+        planner.goal = state_path[-1]
+
         if len(policy) == 0:
             print("Empty Path! Skipping....", flush=True)
-            return
+            return False
 
         fall_count = 0
         success_count = 0
@@ -151,11 +133,14 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             fall_count / float(len(exec_params_set)),
             success_count / float(len(exec_params_set))
         ), flush=True)
+        return True
 
 
 def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
-                                      exec_params: EnvParams, res_fname: str, max_time_s: int,
+                                      exec_params: EnvParams, directory: str, start_goal_idx: int,
+                                      max_time_s: int,
                                       cur_bottle_ori):
+    res_fname = "%s/results_%d" % (directory, start_goal_idx)
     is_success = False
     is_fallen = False
     plan_count = 0
@@ -223,6 +208,7 @@ def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
 class Main(object):
     def __init__(self, args):
         self.planner_folder = None
+        self.plan_type = [0] * len(TYPE_TO_NAME.keys())
         self.setup_dirs(args)
 
         self.env = None
@@ -244,20 +230,20 @@ class Main(object):
         print(arg_str)
 
         if args.single:
-            self.plan_type = SINGLE
+            self.plan_type[SINGLE] = 1
             sub_dir = date_time_str
         elif args.full:
-            self.plan_type = FULL
+            self.plan_type[FULL] = 1
             sub_dir = "fall_%.2f_%s" % (args.fall_thresh, date_time_str)
         elif args.lazy:
-            self.plan_type = LAZY
+            self.plan_type[LAZY] = 1
             sub_dir = "fall_%.2f_%s" % (args.fall_thresh, date_time_str)
-        elif args.custom:
-            self.plan_type = CUSTOM
+
+        if args.beta:
+            self.plan_type[BETA] = 1
             sub_dir = "fall_%.2f_beta_var_%.2f_%s" % (args.fall_thresh, args.beta_var_thresh, date_time_str)
-        else:
-            raise Exception("Need to specify planner type (single, full, lazy, custom)")
-        main_dir = self.plan_type
+
+        main_dir = "_".join([plan_name for plan_type, plan_name in TYPE_TO_NAME.items() if self.plan_type[plan_type]])
 
         if args.replay_results:
             assert args.replay_dir
@@ -273,6 +259,10 @@ class Main(object):
             else:
                 sys.stdout = open(os.path.join(self.planner_folder, "plan_output.txt"), "w")
         print("python " + " ".join(sys.argv), flush=True)  # print specified arguments
+
+        if not args.replay_results:
+            with open(os.path.join(self.planner_folder, "args.json"), "w") as outfile:
+                json.dump(argparse_dict, outfile, indent=4)
 
     def setup_sim(self, args):
         if args.visualize:
@@ -330,24 +320,21 @@ class Main(object):
             self.exec_params_set += self.env.gen_random_env_param_set(num=(args.num_exec_sims // 3))
             self.plan_params_set += self.env.gen_random_env_param_set(num=(args.num_plan_sims // 3))
 
-            # Test if single planner using low and high friction produce different performance
-            if args.single_low_fric:
-                print("Manually forcing single planner to use LOW friction")
-                self.env.set_distribs(min_fric=self.env.bottle.low_fric_min, max_fric=self.env.bottle.low_fric_max)
-                self.single_param = self.env.gen_random_env_param_set(num=1)[0]
+        # Test if single planner using low and high friction produce different performance
+        if args.single_low_fric:
+            print("Manually forcing single planner to use LOW friction")
+            self.env.set_distribs(min_fric=self.env.bottle.low_fric_min, max_fric=self.env.bottle.low_fric_max)
+            self.single_param = self.env.gen_random_env_param_set(num=1)[0]
 
-            elif args.single_high_fric:
-                print("Manually forcing single planner to use HIGH friction")
-                self.env.set_distribs(min_fric=self.env.bottle.high_fric_min, max_fric=self.env.bottle.high_fric_max)
-                self.single_param = self.env.gen_random_env_param_set(num=1)[0]
+        elif args.single_high_fric:
+            print("Manually forcing single planner to use HIGH friction")
+            self.env.set_distribs(min_fric=self.env.bottle.high_fric_min, max_fric=self.env.bottle.high_fric_max)
+            self.single_param = self.env.gen_random_env_param_set(num=1)[0]
 
-            elif args.single_med_fric:
-                print("Manually forcing single planner to use MEDIUM friction")
-                self.env.set_distribs(min_fric=self.env.bottle.low_fric_max, max_fric=self.env.bottle.high_fric_min)
-                self.single_param = self.env.gen_random_env_param_set(num=1)[0]
-
-            else:
-                self.single_param = None
+        elif args.single_med_fric:
+            print("Manually forcing single planner to use MEDIUM friction")
+            self.env.set_distribs(min_fric=self.env.bottle.low_fric_max, max_fric=self.env.bottle.high_fric_min)
+            self.single_param = self.env.gen_random_env_param_set(num=1)[0]
 
         # save all parameters used
         if not args.replay_results:
@@ -363,8 +350,6 @@ class Main(object):
                                         plan_params_set=self.plan_params_set,
                                         single_param=self.single_param)
                 pickle.dump(exec_plan_params, f)
-            with open(os.path.join(self.planner_folder, "args.json"), "w") as outfile:
-                json.dump(self.planner_folder, outfile, indent=4)
 
             if args.save_global_params:
                 with open(global_params_path, "wb") as f:
@@ -378,24 +363,13 @@ class Main(object):
                 print(param)
 
     def setup_planner(self, args):
-        with open("test_start_goals.obj", "rb") as f:
-            self.start_goals = pickle.load(f)
-        # (startb, goalb, start_joints) = start_goals[3]
-        # # startb += np.array([0.2, 0.1, 0])
-        # goalb += np.array([-0., -0, 0])  # .43, .06
-        # start_goals[3] = (startb, goalb, start_joints)
-
-        # with open("filtered_start_goals.obj", "wb") as f:
-        #     pickle.dump(start_goals, f)
-
         # Create planner
         da_rad = args.dtheta * math.pi / 180.
         self.planner = NaivePlanner(env=self.env, plan_type=self.plan_type, sim_params_set=self.plan_params_set,
                                     dist_thresh=args.goal_thresh, eps=args.eps, da_rad=da_rad,
                                     dx=args.dx, dy=args.dy, dz=args.dz, visualize=args.visualize,
                                     fall_thresh=args.fall_thresh, use_ee_trans_cost=args.use_ee_trans_cost,
-                                    single_param=self.single_param,
-                                    lazy=args.lazy)
+                                    single_param=self.single_param, save_edge_betas=args.save_edge_betas)
 
         # Possibly specify a specific start-goal pair to run
         if args.start_goal != -1:
@@ -412,12 +386,16 @@ class Main(object):
             self.targets = list(range(0, 11))
 
     def run_experiments(self):
+        with open("start_goals.obj", "rb") as f:
+            self.start_goals = pickle.load(f)
+
         for start_goal_idx in self.targets:
             print("Start goal idx: %d" % start_goal_idx, flush=True)
 
             if args.solved_path_index is not None:
                 assert args.replay_dir is not None
-                res_fname = "%s/results_%d" % (args.replay_dir, start_goal_idx)
+                directory = args.replay_dir
+                res_fname = os.path.join(directory, start_goal_idx)
                 results = np.load("%s.npz" % res_fname, allow_pickle=True)
                 node_path = results["node_path"]
                 (_, goalb, _) = self.start_goals[start_goal_idx]
@@ -427,7 +405,7 @@ class Main(object):
                 start_bottle_ori = start.bottle_ori
 
             else:
-                res_fname = "%s/results_%d" % (self.planner_folder, start_goal_idx)
+                directory = self.planner_folder
                 (startb, goalb, start_joints) = self.start_goals[start_goal_idx]
                 start_bottle_ori = np.array([0, 0, 0, 1])
 
@@ -440,7 +418,8 @@ class Main(object):
             if args.use_replan and not args.replay_results:
                 piecewise_execution_replan_helper(self.planner, self.env,
                                                   exec_params=self.exec_params_set[0],
-                                                  res_fname=res_fname,
+                                                  directory=directory,
+                                                  start_goal_idx=start_goal_idx,
                                                   max_time_s=args.max_time,
                                                   cur_bottle_ori=start_bottle_ori)
             else:
@@ -448,7 +427,8 @@ class Main(object):
                 piecewise_execution(self.planner, self.env,
                                     exec_params_set=self.exec_params_set,
                                     replay_results=args.replay_results,
-                                    res_fname=res_fname,
+                                    directory=directory,
+                                    start_goal_idx=start_goal_idx,
                                     visualize=args.visualize,
                                     max_time_s=args.max_time,
                                     cur_bottle_ori=start_bottle_ori)

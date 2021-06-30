@@ -185,7 +185,6 @@ class Environment(object):
         bottle pose and arm joint poise. Specify some action to take. Generates a joint-space trajectory
         for lower-level simulation function to execute.
         """
-        start_time = time.time()
         if state.joints is None:  # use arm's current joint state
             state.joints = self.arm.joint_pose
 
@@ -199,8 +198,6 @@ class Environment(object):
         results = self.simulate_plan(joint_traj=joint_traj,
                                      start_bottle_pos=bottle_pos, start_bottle_ori=bottle_ori,
                                      sim_params=sim_params)
-        end_time = time.time()
-        print("run_sim: %.4f" % (end_time - start_time))
         return results
 
     def reset(self):
@@ -229,12 +226,7 @@ class Environment(object):
         Returns:
             [type] -- [description]
         """
-        start = time.time()
         self.reset()
-        end = time.time()
-        sim_reset = end - start
-
-        start = time.time()
         self.arm.reset(joint_traj[0, :])
         init_arm_pos = np.array(p.getLinkState(
             self.arm.kukaId, self.arm.EE_idx)[4])
@@ -253,44 +245,24 @@ class Environment(object):
             prev_bottle_ori = self.bottle.start_ori
         bottle_stopped = False
         is_collision = False
-        end = time.time()
-        setup_objects = end - start
 
         iter = 0
         traj_len = joint_traj.shape[0]
 
-        command = 0
-        step_sim = 0
-        collision_time = 0
-        check_bottle_state = 0
         while iter < traj_len:
             # set target joint pose
-            start = time.time()
             next_joint_pose = joint_traj[min(iter, traj_len - 1), :]
             self.command_new_pose(next_joint_pose)
-            end = time.time()
-            command += end - start
-            # print(np.concatenate([self.bottle.pos, self.arm.joint_pose]))
 
             # run one sim iter
-            start = time.time()
             p.stepSimulation()
-            end = time.time()
-            step_sim += end - start
-
-            start = time.time()
             contacts = p.getContactPoints(
                 self.arm.kukaId, self.bottle.bottle_id)
-            end = time.time()
-            collision_time += end - start
-            # if len(contacts) > 0 and not is_collision:
-            #     print("COLLISION!!!")
-            #     print(iter)
             is_collision |= (len(contacts) > 0)
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
-                time.sleep(0.003)
+                time.sleep(0.0005)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory
@@ -299,51 +271,33 @@ class Environment(object):
                 # p.addUserDebugLine(arm_pos, prev_arm_pos, [1, 0, 0], 1,
                 #                    self.trail_dur)
                 prev_arm_pos = arm_pos
-                # time.sleep(self.SIM_VIZ_FREQ)
 
             # check status of other objects to possibly terminate sim early
-            start = time.time()
-            self.bottle.update_pose()
-            bottle_vert_stopped = math.isclose(
-                self.bottle.pos[2] - prev_bottle_pos[2],
-                0.0, abs_tol=1e-05)
-            bottle_horiz_stopped = math.isclose(
-                np.linalg.norm(
-                    np.array(self.bottle.pos)[:2] - np.array(prev_bottle_pos)[:2]),
-                0.0, abs_tol=1e-05)
+            # self.bottle.update_pose()
+            # bottle_vert_stopped = math.isclose(
+            #     self.bottle.pos[2] - prev_bottle_pos[2],
+            #     0.0, abs_tol=1e-05)
+            # bottle_horiz_stopped = math.isclose(
+            #     np.linalg.norm(
+            #         np.array(self.bottle.pos)[:2] - np.array(prev_bottle_pos)[:2]),
+            #     0.0, abs_tol=1e-05)
             # angle_diff = abs(self.bottle.calc_vert_angle(ori=prev_bottle_ori) -
             #                  self.bottle.calc_vert_angle()) * 180 / math.pi
             # bottle_angle_stopped = angle_diff <= self.min_ang_rot
             # bottle_stopped = bottle_vert_stopped and bottle_horiz_stopped  # and bottle_angle_stopped
             # prev_bottle_pos = self.bottle.pos
             # prev_bottle_ori = self.bottle.ori
-            end = time.time()
-            check_bottle_state += end - start
 
             iter += 1
 
         # generate cost and final position
-        start = time.time()
         self.arm.update_joint_pose()
         self.bottle.update_pose()
         is_fallen, z_rot_ang = self.check_bottle_fallen(ori=self.bottle.ori)
         no_movement = np.linalg.norm(start_bottle_pos - self.bottle.pos) < self.no_movement_thresh
-        end = time.time()
-        check_bottle_fall = end - start
 
         # remove bottle object, can't just reset pos since need to change params each iter
-        start = time.time()
         p.removeBody(self.bottle.bottle_id)
-        end = time.time()
-        remove_time = end - start
-
-        print("sim_reset: %.5f" % sim_reset)
-        print("command: %.5f" % command)
-        print("setup_objects: %.5f" % setup_objects)
-        print("step_sim: %.5f" % step_sim)
-        print("collision_time: %.5f" % collision_time)
-        print("check_bottle_state: %.5f" % (check_bottle_state + check_bottle_fall))
-        print("remove_time: %.5f" % remove_time)
 
         # , executed_traj
         return SimResults(is_fallen=is_fallen, is_collision=is_collision and not no_movement,
