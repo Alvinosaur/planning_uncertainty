@@ -25,7 +25,10 @@ GRAVITY = -9.81
 
 def run_policy(planner: NaivePlanner, env: Environment, policy,
                exec_params: EnvParams, cur_bottle_ori=np.array([0, 0, 0, 1.]),
-               break_on_fail=True, visualize=False):
+               break_on_fail=True, visualize=False,
+               compare_to_plan=False, state_path=None, compare_plan_thresh=0.05):
+    if compare_to_plan: assert state_path is not None
+
     cur_bottle_pos = planner.bottle_pos_from_state(planner.start)
     cur_joints = planner.joint_pose_from_state(planner.start)
     env.arm.reset(cur_joints)
@@ -36,7 +39,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
 
     print(exec_params)
     for step in range(len(policy)):
-        planner.check_visualize()
+        planner.check_visualize(is_guide=False)
 
         s = "[%d]: " % step
         s += "Bpos(" + ",".join(["%.2f" % v for v in cur_bottle_pos]) + "), "
@@ -54,13 +57,19 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints, _ = (
             env.run_sim(state=state_tuple, action=policy[step], sim_params=exec_params)
         )
-        planner.check_visualize()
+        planner.check_visualize(is_guide=False)
         is_fallen |= step_is_fallen
         executed_traj.append(
             planner.format_state(bottle_pos=cur_bottle_pos, joints=cur_joints))
 
         if is_fallen and break_on_fail:
             break
+
+        if compare_to_plan:
+            planned_bottle_pos = state_path[step][:3]
+            dist_from_plan = np.linalg.norm(cur_bottle_pos - planned_bottle_pos)
+            if dist_from_plan > compare_plan_thresh:
+                break
 
     is_success = planner.reached_goal(cur_bottle_pos) and not is_fallen
     return is_fallen, is_success, executed_traj, cur_bottle_ori
@@ -89,7 +98,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
             return True
 
         except helpers.TimeoutException:
-            print("end: %.1f, start: %.1f, num_expand: %d" % (time.time(), start_time, planner.num_expansions),
+            print("Timed out, num_expand: %d" % planner.num_expansions,
                   flush=True)
             if planner.save_edge_betas:
                 np.savez("%s" % "%s/edge_data_%d" % (directory, start_goal_idx),
@@ -138,71 +147,62 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
 
 def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
                                       exec_params: EnvParams, directory: str, start_goal_idx: int,
-                                      max_time_s: int,
-                                      cur_bottle_ori):
+                                      max_time_s: int, max_attempts=3,
+                                      cur_bottle_ori=np.array([0, 0, 0, 1]),
+                                      compare_plan_thresh=0.05):
     res_fname = "%s/results_%d" % (directory, start_goal_idx)
     is_success = False
     is_fallen = False
-    plan_count = 0
     final_state_path = []
     final_policy = []
     final_node_path = []
     executed_traj = None
+    attempts = 0
 
     try:
         start_time = time.time()
-        with helpers.time_limit(max_time_s):
-            while not is_success and not is_fallen:
-                # plan from current state
-                plan_count += 1
-                if executed_traj is not None:
-                    planner.start = executed_traj[-1]
-                state_path, policy, node_path = planner.plan(bottle_ori=cur_bottle_ori)
-                final_state_path += state_path
-                final_policy += policy
-                final_node_path += node_path
+        while not is_success and not is_fallen and attempts < max_attempts:
+            # plan from current state
+            attempts += 1
+            if executed_traj is not None:
+                planner.start = executed_traj[-1]
+            try:
+                with helpers.time_limit(max_time_s):
+                    state_path, policy, node_path = planner.plan(bottle_ori=cur_bottle_ori)
+            except helpers.TimeoutException:
+                print("Timed out, num_expand: %d" % planner.num_expansions,
+                      flush=True)
+                break
 
-                is_fallen, is_success, executed_traj, cur_bottle_ori = (
-                    run_policy(planner, env, policy, exec_params,
-                               cur_bottle_ori=cur_bottle_ori,
-                               break_on_fail=True, visualize=False)
-                )
-                if is_success:
-                    status_msg = "success"
-                elif is_fallen:
-                    status_msg = "failure, knocked over"
-                else:
-                    status_msg = "failure, replanning..."
+            final_state_path += state_path
+            final_policy += policy
+            final_node_path += node_path
 
-                print(f"Execution of Plan: {status_msg}")
-                time_taken = time.time() - start_time
-                print("time taken: %.3f" % time_taken, flush=True)
-                print("Saving plan to %s" % res_fname, flush=True)
-                np.savez("%s" % res_fname,
-                         state_path=final_state_path, policy=final_policy, node_path=final_node_path)
+            is_fallen, is_success, executed_traj, cur_bottle_ori = (
+                run_policy(planner, env, policy, exec_params,
+                           cur_bottle_ori=cur_bottle_ori,
+                           break_on_fail=True, visualize=False,
+                           compare_to_plan=True, state_path=state_path,
+                           compare_plan_thresh=compare_plan_thresh)
+            )
+            if is_success:
+                status_msg = "success"
+            elif is_fallen:
+                status_msg = "failure, knocked over"
+            else:
+                status_msg = "replanning..."
+
+            print(f"Execution of Plan: {status_msg}")
+            time_taken = time.time() - start_time
+            print("time taken: %.3f" % time_taken, flush=True)
+            print("Saving plan to %s" % res_fname, flush=True)
+            np.savez("%s" % res_fname,
+                     state_path=final_state_path, policy=final_policy, node_path=final_node_path)
 
     except helpers.TimeoutException:
         print("time taken: NA", flush=True)
 
-    return is_success, is_fallen, plan_count
-
-
-def piecewise_execution_replan(planner: NaivePlanner, env: Environment,
-                               exec_params_set,
-                               res_fname,
-                               max_time_s,
-                               cur_bottle_ori=np.array([0, 0, 0, 1])):
-    orig_start = planner.start
-    orig_goal = planner.goal
-
-    for exec_i, exec_params in enumerate(exec_params_set):
-        planner.start = orig_start
-        planner.goal = orig_goal
-        piecewise_execution_replan_helper(planner, env,
-                                          exec_params=exec_params,
-                                          res_fname=res_fname + "_exec_%d" % exec_i,
-                                          max_time_s=max_time_s,
-                                          cur_bottle_ori=cur_bottle_ori)
+    return is_success, is_fallen, attempts
 
 
 class Main(object):
@@ -331,7 +331,7 @@ class Main(object):
             self.env.set_distribs(min_fric=self.env.bottle.high_fric_min, max_fric=self.env.bottle.high_fric_max)
             self.single_param = self.env.gen_random_env_param_set(num=1)[0]
 
-        elif args.single_med_fric:
+        elif args.single_med_fric or not args.load_params:
             print("Manually forcing single planner to use MEDIUM friction")
             self.env.set_distribs(min_fric=self.env.bottle.low_fric_max, max_fric=self.env.bottle.high_fric_min)
             self.single_param = self.env.gen_random_env_param_set(num=1)[0]

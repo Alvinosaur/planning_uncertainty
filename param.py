@@ -50,6 +50,7 @@ def parse_arguments():
 
     # Generate random start-goal files
     parser.add_argument('--start_goal_fname', action="store", type=str)
+    parser.add_argument('--num_configs', action="store", type=int, default=10)
 
     # DEBUG:
     # Optionally specify specific start-goal pairs or even index of a solved path

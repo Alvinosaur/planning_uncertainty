@@ -201,7 +201,7 @@ class Environment(object):
         return results
 
     def reset(self):
-        # pass
+        if self.is_viz: return
         p.resetSimulation()
         p.setGravity(0, 0, self.GRAVITY)
         p.loadURDF(self.plane_urdf_filepath, basePosition=[0, 0, 0])
@@ -262,7 +262,7 @@ class Environment(object):
 
             # get feedback and vizualize trajectories
             if self.is_viz and prev_arm_pos is not None:
-                time.sleep(0.0005)
+                time.sleep(0.002)
                 ls = p.getLinkState(self.arm.kukaId, self.arm.EE_idx)
                 arm_pos = ls[4]
                 # Uncomment below to visualize lines of target and actual trajectory

@@ -2,6 +2,7 @@ import pybullet as p
 import time
 import math
 import numpy as np
+from scipy.stats import beta as scipy_beta
 
 import heapq
 from pyquaternion import Quaternion
@@ -53,17 +54,24 @@ while state != start:
 
 DEG2RAD = math.pi / 180.0
 RAD2DEG = 1 / DEG2RAD
-SINGLE = "single"
-FULL = "full"
-LAZY = "lazy"
-CUSTOM = "custom"
+SINGLE = 0
+FULL = 1
+LAZY = 2
+BETA = 3
+TYPE_TO_NAME = {
+    SINGLE: "single",
+    FULL: "full",
+    LAZY: "lazy",
+    BETA: "beta",
+}
 
 
 class Node(object):
-    def __init__(self, cost, state, ee_pos, fall_history=[], mode_sim_param=None, fall_prob=-1.0,
+    def __init__(self, cost, state, state_key, ee_pos, prev_n, prev_ai, fall_history=[], mode_sim_param=None,
+                 fall_prob=-1.0,
                  bottle_ori=np.array([0, 0, 0, 1]), g=0, h=0,
                  extra_info=None,
-                 is_fully_evaluated=False, prev_n=None, prev_ai=None):
+                 is_fully_evaluated=False):
         self.cost = cost
         self.fall_prob = fall_prob
         self.fall_history = fall_history
@@ -74,6 +82,7 @@ class Node(object):
         self.bottle_goal_dist = bottle_goal_dist
         self.arm_bottle_dist = arm_bottle_dist
         self.state = state
+        self.state_key = state_key
         self.bottle_ori = bottle_ori
         self.nearest_arm_pos_i = nearest_arm_pos_i
         self.nearest_arm_pos = nearest_arm_pos
@@ -86,21 +95,19 @@ class Node(object):
         return self.cost < other.cost
 
     def __repr__(self):
-        s = "C(%.2f) | h(%.3f) | d(%.3f) | " % (self.cost, self.h, self.bottle_goal_dist)
+        s = "(" + ",".join("%d" % v for v in self.state_key[0]) + "|" + ",".join(
+            "%d" % v for v in self.state_key[1]) + "), "
         s += "Bpos(" + ",".join(["%.2f" % v for v in self.state[:3]]) + "), "
-        s += "Bang(" + "%.1f" % (Bottle.calc_vert_angle(self.bottle_ori) * RAD2DEG) + "), "
-        s += "Joints(" + ",".join(["%.3f" % v for v in self.state[3:]]) + "), "
-        # s += "), fall history:"
-        # s += ",".join(["%d" % v for v in self.fall_history])
-        s += " | %s" % self.mode_sim_param
+        s += "C(%.2f) | h(%.2f) | d_bg(%.2f) | d_ab(%.2f)" % (
+            self.cost, self.h, self.bottle_goal_dist, self.arm_bottle_dist)
         return s
 
 
 class NaivePlanner(object):
     def __init__(self, env, plan_type, sim_params_set, dist_thresh=1e-1, eps=1, dx=0.1, dy=0.1, dz=0.1,
                  da_rad=15 * DEG2RAD, visualize=False, start=None, goal=None,
-                 fall_thresh=0.2, use_ee_trans_cost=True, sim_type="always_N",
-                 sim_dist_thresh=0.18, single_param=None, lazy=False):
+                 fall_thresh=0.2, use_ee_trans_cost=True, save_edge_betas=False,
+                 sim_dist_thresh=0.18, single_param=None, var_thresh=0.02):
         # state = [x,y,z,q1,q2...,q7]
         self.start = np.array(start)
         self.goal = np.array(goal)
@@ -115,6 +122,15 @@ class NaivePlanner(object):
         # Costs and weights
         self.dist_cost_weights = np.array([3, 3, 2])  # x, y, z
         self.use_ee_trans_cost = use_ee_trans_cost
+
+        # beta distribution parameters
+        # TODO: find a better initialization for these parameters, specific to each edge
+        self.alpha_prior = 1
+        self.beta_prior = 1
+        self.var_thresh = var_thresh  # (alpha=6, beta=1), (alpha=7, beta=2) passes
+        self.move_cost_w = 0.01
+        self.sample_thresh = len(sim_params_set)
+        self.save_edge_betas = save_edge_betas  # optionally save all (state,action,alpha,beta)
 
         # define action space
         self.da = da_rad
@@ -139,22 +155,50 @@ class NaivePlanner(object):
         self.fall_thresh = fall_thresh
 
         self.sim_dist_thresh = sim_dist_thresh
-        self.lazy = lazy
         self.move_cost_w = 0.01
 
         # method of simulating an action
         self.plan_type = plan_type
-        if lazy:
-            self.sim_func = self.env.run_sim
-            self.full_sim_func = self.env.run_multiple_sims
-        elif plan_type == SINGLE:
-            self.sim_func = self.env.run_sim
-        elif plan_type == FULL:
-            self.sim_func = self.env.run_multiple_sims
-        elif plan_type == LAZY:
-            self.sim_func = self.env.run_multiple_sims
-        else:
-            assert False, "Invalid plan_type specified!"
+
+    def eval_edge_beta(self, state_tuple, action):
+        # TODO: pick better initialization
+        alpha = self.alpha_prior
+        beta = self.beta_prior
+
+        # shuffle the sim params
+        sim_params = np.random.permutation(self.sim_params_set)
+        all_results = []
+
+        count = 0  # represents the same idea as alpha + beta
+        while scipy_beta.var(a=alpha, b=beta) > self.var_thresh and count < self.sample_thresh:
+            # sample from parameter distribution
+            sampled_sim_param = sim_params[count]
+
+            results = self.env.run_sim(
+                action=action, state=state_tuple,
+                sim_params=sampled_sim_param)
+
+            all_results.append(results)
+
+            is_fallen = results[0]
+            if is_fallen:
+                beta += 1
+            else:
+                alpha += 1
+
+            count += 1
+
+            if not results.is_collision:
+                break
+
+        if results.is_collision:
+            print("Alpha: %d, beta: %d" % (alpha, beta))
+            self.edge_beta_states.append(
+                np.concatenate([state_tuple.bottle_pos, state_tuple.bottle_ori, state_tuple.joints]))
+            self.edge_beta_actions.append(np.concatenate([action[0], [action[1]]]))
+            self.edge_beta_values.append(np.array([alpha, beta]))
+
+        return all_results
 
     def expand_state(self, n, state, state_key):
         self.num_expansions += 1
@@ -172,25 +216,32 @@ class NaivePlanner(object):
 
         # explore all actions from this state
         for ai in self.A.action_ids:
-            self.check_visualize()
+            self.check_visualize(is_guide=False)
             # action defined as an offset of joint angles of arm
             action = self.A.get_action(ai)
+            # print("   action: " + ",".join(["%.2f" % v for v in action[0]]) + "), ")
 
             # N = 1 only use one simulation parameter set
-            if self.lazy or self.plan_type == SINGLE:
+            if self.plan_type[LAZY] or self.plan_type[SINGLE]:
                 self.num_lazy_evals += 1
-                results = [self.sim_func(
+                results = [self.env.run_sim(
                     action=action, state=cur_state_tuple,
                     sim_params=self.single_param), ]
 
             # N > 1
             else:
-                self.num_full_evals += 1
-                results = self.sim_func(
-                    action=action, state=cur_state_tuple,
-                    sim_params_set=self.sim_params_set)
-
-            self.process_new_successor(n=n, ai=ai, results=results)
+                if self.plan_type[FULL]:
+                    self.num_full_evals += 1
+                    results = self.env.run_multiple_sims(
+                        action=action, state=cur_state_tuple,
+                        sim_params_set=self.sim_params_set)
+                elif self.plan_type[BETA]:
+                    self.num_full_evals += 1
+                    results = self.eval_edge_beta(state_tuple=cur_state_tuple, action=action)
+                else:
+                    assert False, "Unknown plan_type: %s!" % self.plan_type
+            self.check_visualize(is_guide=False)
+            self.process_new_successor(prev_n=n, prev_ai=ai, results=results)
 
     def reevaluate_edge(self, n):
         prev_ai, prev_n = n.prev_ai, n.prev_n
@@ -198,15 +249,19 @@ class NaivePlanner(object):
         prev_bottle = self.bottle_pos_from_state(prev_n.state)
         prev_joints = self.joint_pose_from_state(prev_n.state)
         prev_state_tuple = StateTuple(bottle_pos=prev_bottle, bottle_ori=prev_n.bottle_ori, joints=prev_joints)
-        results = self.full_sim_func(
-            action=prev_action, state=prev_state_tuple,
-            sim_params_set=self.sim_params_set)
-        self.process_new_successor(n=prev_n, ai=prev_ai, results=results)
+        if self.plan_type[BETA]:
+            results = self.eval_edge_beta(state_tuple=prev_state_tuple, action=prev_action)
 
-    def process_new_successor(self, n, ai, results, cur_cost=0.0, is_fully_evaluated=None):
+        else:
+            results = self.env.run_multiple_sims(
+                action=prev_action, state=prev_state_tuple,
+                sim_params_set=self.sim_params_set)
+        self.process_new_successor(prev_n=prev_n, prev_ai=prev_ai, results=results, is_fully_evaluated=True)
+
+    def process_new_successor(self, prev_n, prev_ai, results, is_fully_evaluated=None):
         if len(results) == 1:
             (is_fallen, is_collided, next_bottle_pos,
-             next_bottle_ori, next_joint_pose, z_ang_mean) = results
+             next_bottle_ori, next_joint_pose, z_ang_mean) = results[0]
             mode_sim_param = self.single_param
             invalid = is_fallen
             fall_history = [is_fallen]
@@ -221,9 +276,14 @@ class NaivePlanner(object):
         next_state = np.concatenate([next_bottle_pos, next_joint_pose])
         next_state_key = self.state_to_key(next_state)
 
+        if is_collided:
+            pass
+            # print("   collision", flush=True)
+
         # completely ignore actions that knock over bottle with high
         # probability
         if invalid:
+            # print("   invalid: p=%.2f" % fall_prob, flush=True)
             self.invalid_count += 1
             return
 
@@ -233,9 +293,9 @@ class NaivePlanner(object):
         new_arm_positions = self.env.arm.get_joint_link_positions(
             next_joint_pose)
         next_state = np.concatenate([next_bottle_pos, next_joint_pose])
-        h, trans_cost, extra_info = self.calc_all_costs(n=n, new_arm_positions=new_arm_positions,
+        h, trans_cost, extra_info = self.calc_all_costs(n=prev_n, new_arm_positions=new_arm_positions,
                                                         next_state=next_state)
-        new_G = cur_cost + trans_cost
+        new_G = prev_n.g + trans_cost
 
         if next_state_key not in self.G or (
                 self.G[next_state_key] > new_G):
@@ -248,15 +308,22 @@ class NaivePlanner(object):
                 mode_sim_param=mode_sim_param,
                 g=new_G, h=h, extra_info=extra_info,
                 state=next_state,
+                state_key=next_state_key,
                 bottle_ori=next_bottle_ori,
                 ee_pos=new_arm_positions[-1],
-                is_fully_evaluated=is_fully_evaluated)
+                is_fully_evaluated=is_fully_evaluated,
+                prev_n=prev_n,
+                prev_ai=prev_ai)
+            # print("   successor: %s" % new_node, flush=True)
 
             heapq.heappush(self.open_set, new_node)
-            self.transitions[next_state_key] = (ai, n)
+            self.transitions[next_state_key] = (prev_ai, prev_n)
+        else:
+            pass
+            # print("   successor: skipping", flush=True)
 
     def plan(self, bottle_ori=np.array([0, 0, 0, 1])):
-        start_time = time.time()
+        total_start_time = time.time()
 
         # initialize open set with start and G values
         self.setup(bottle_ori=bottle_ori)
@@ -269,25 +336,27 @@ class NaivePlanner(object):
             if state_key in self.closed_set:
                 continue
 
-            # expand this state's successors
-            if not self.lazy or (self.lazy and n.is_fully_evaluated):
-                self.expand_state(n, state, state_key)
-
             # re-evaluate previous transition fully
-            else:
+            if self.plan_type[LAZY] and not n.is_fully_evaluated:
                 self.num_full_evals += 1
+                print("reevaluating edge: %s" % n, flush=True)
                 self.reevaluate_edge(n)
 
-            print(n, flush=True)
+            # expand this state's successors
+            else:
+                print("expanding edge: %s" % n, flush=True)
+                start_time = time.time()
+                self.expand_state(n, state, state_key)
+                print("time to expand: %.2f" % (time.time() - start_time))
 
-        print("Total time: %.4f" % (time.time() - start_time))
+        print("Total time: %.4f" % (time.time() - total_start_time))
 
         print("States Expanded: %d, found goal: %d" %
               (self.num_expansions, self.goal_expanded))
         print("Num full evaluations: %d" % self.num_full_evals)
         print("Num lazy evaluations: %d" % self.num_lazy_evals)
 
-        print("invalid count: %d")
+        print("invalid count: %d" % self.invalid_count)
         print("Total evaluations: %d" % (self.num_lazy_evals + self.num_full_evals))
         print("invalid rate: %.3f" % (self.invalid_count / (self.num_lazy_evals + self.num_full_evals)))
         if not self.goal_expanded:
@@ -333,26 +402,20 @@ class NaivePlanner(object):
                 self.joint_pose_from_state(self.start))
         arm_bottle_dist, nn_joint_i, nn_joint_pos = (
             self.dist_arm_to_bottle(self.start, arm_positions))
-        extra_info = (nn_joint_i, nn_joint_pos, None, arm_bottle_dist)
+        bottle_goal_dist, _ = self.dist_to_goal(self.start, nn_joint_pos)
+        extra_info = (nn_joint_i, nn_joint_pos, bottle_goal_dist, arm_bottle_dist)
         self.open_set = [
-            Node(0, self.start,
+            Node(0, state=self.start, state_key=self.state_to_key(self.start),
                  extra_info=extra_info,
                  bottle_ori=bottle_ori,
                  ee_pos=arm_positions[-1],
-                 is_fully_evaluated=True)]
+                 is_fully_evaluated=True,
+                 prev_n=None,
+                 prev_ai=None)]
         self.closed_set = set()
         self.G = dict()
         self.G[self.state_to_key(self.start)] = 0
         self.transitions = dict()
-
-        if self.visualize:
-            goal_bpos = self.bottle_pos_from_state(self.goal)
-            self.env.goal_line_id = self.env.draw_line(
-                lineFrom=goal_bpos,
-                lineTo=goal_bpos + np.array([0, 0, 0.5]),
-                lineColorRGB=[0, 0, 1], lineWidth=1,
-                replaceItemUniqueId=self.env.goal_line_id,
-                lifeTime=0)
 
         # metrics on performance of planner
         self.num_expansions = 0
@@ -368,6 +431,11 @@ class NaivePlanner(object):
         self.total_process_sim_time = 0
         self.start_total_time = time.time()
 
+        # store data
+        self.edge_beta_states = []
+        self.edge_beta_actions = []
+        self.edge_beta_values = []
+
     def debug_view_state(self, state):
         joint_pose = self.joint_pose_from_state(state)
         bx, by, _ = self.bottle_pos_from_state(state)
@@ -377,15 +445,28 @@ class NaivePlanner(object):
         dist = ((bx - eex) ** 2 + (by - eey) ** 2) ** 0.5
         print("dist, bx, by: %.2f, (%.2f, %.2f)" % (dist, bx, by))
 
-    def check_visualize(self):
-        if self.visualize:
+    def check_visualize(self, is_guide, goal_bpos=None):
+        # return
+        if not self.visualize:
+            return
+
+        vertical_offset = np.array([0, 0, 0.5])
+        if is_guide:
+            assert goal_bpos is not None
+            self.env.target_line_id = self.env.draw_line(
+                lineFrom=goal_bpos,
+                lineTo=goal_bpos + vertical_offset,
+                lineColorRGB=[0, 0, 1], lineWidth=1,
+                replaceItemUniqueId=self.env.target_line_id,
+                lifeTime=0)
+
+        else:
             goal_bpos = self.bottle_pos_from_state(self.goal)
-            vertical_offset = np.array([0, 0, 0.5])
             self.env.goal_line_id = self.env.draw_line(
                 lineFrom=goal_bpos,
                 lineTo=goal_bpos + vertical_offset,
                 lineColorRGB=[0, 0, 1], lineWidth=1,
-                # replaceItemUniqueId=self.env.goal_line_id,
+                replaceItemUniqueId=self.env.goal_line_id,
                 lifeTime=0)
 
     def calc_all_costs(self, n: Node, new_arm_positions, next_state):
@@ -492,14 +573,7 @@ class NaivePlanner(object):
         if self.guided_direction:
             bottle_pos = self.get_guided_bottle_pos(
                 bottle_pos, dist_offset=0.1)
-        if self.visualize:
-            vertical_offset = np.array([0, 0, 0.5])
-            self.env.target_line_id = self.env.draw_line(
-                lineFrom=bottle_pos,
-                lineTo=bottle_pos + vertical_offset,
-                lineColorRGB=[1, 0, 0], lineWidth=1,
-                replaceItemUniqueId=self.env.target_line_id,
-                lifeTime=0)
+        self.check_visualize(is_guide=True, goal_bpos=bottle_pos)
 
         dist = np.linalg.norm(self.dist_cost_weights * (np.array(positions[-1]) - bottle_pos))
         return dist, -1, positions[-1]
@@ -533,9 +607,9 @@ class NaivePlanner(object):
 
     def state_to_key(self, state):
         pos = np.array(self.bottle_pos_from_state(state))
-        pos_i = np.rint(pos / self.dpos)
+        pos_i = np.rint(pos / self.dpos).astype(np.int)
         joints = self.joint_pose_from_state(state)
-        joints_i = np.rint(joints / self.da)
+        joints_i = np.rint(joints / self.da).astype(np.int)
         # tuple of ints as unique id
         return tuple(pos_i), tuple(joints_i)
 

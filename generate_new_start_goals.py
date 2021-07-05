@@ -17,7 +17,7 @@ DEG_TO_RAD = math.pi / 180.0
 def generate_random_start_goals(main: Main, args, num_pairs=10):
     main.env.arm.set_general_max_reach(
         all_contact_heights=np.linspace(start=0.2 * main.env.bottle.height, stop=main.env.bottle.height, num=3))
-    max_horiz_dist = 1.0 * main.env.arm.MAX_HORIZ_REACH
+    max_horiz_dist = 0.9 * main.env.arm.MAX_HORIZ_REACH
     min_horiz_dist = 0.2 * main.env.arm.MAX_HORIZ_REACH
     empty_action = (np.zeros(main.env.arm.num_joints), 50)
 
@@ -90,25 +90,25 @@ def generate_random_start_goals(main: Main, args, num_pairs=10):
 
 
 if __name__ == "__main__":
-    # args = parse_arguments()
-    # main = Main(args)
+    ############################## generate new start-goals ################################
+    args = parse_arguments()
+    main = Main(args)
+    start_goals = generate_random_start_goals(main, args, num_pairs=args.num_configs)
+
+    ############################## aggregate all saved start goals ################################
+    # start_goals = []
+    # data_root = "/home/alvin/research/planning_uncertainty/lazy"
+    # for dir in os.listdir(data_root):
+    #     for f in os.listdir(os.path.join(data_root, dir)):
+    #         if f[-3:] == "npz":
+    #             results = np.load(os.path.join(data_root, dir, f), allow_pickle=True)
+    #             try:
+    #                 start = results["node_path"][0].state
+    #                 goal = results["state_path"][-1]
+    #                 start_goals.append((start[:3], goal[:3], start[3:]))
+    #             except Exception as e:
+    #                 print(e)
     #
-    # start_goals = generate_random_start_goals(main, args, num_pairs=10)
-
-    # aggregate all saved start goals
-    start_goals = []
-    data_root = "/home/alvin/research/planning_uncertainty/single"
-    for dir in os.listdir(data_root):
-        for f in os.listdir(os.path.join(data_root, dir)):
-            if f[-3:] == "npz":
-                results = np.load(os.path.join(data_root, dir, f), allow_pickle=True)
-                try:
-                    start = results["node_path"][0].state
-                    goal = results["state_path"][-1]
-                    start_goals.append((start[:3], goal[:3], start[3:]))
-                except Exception as e:
-                    print(e)
-
-    print("Saved %d pairs" % len(start_goals))
-    with open(os.path.join("/home/alvin/research/planning_uncertainty/start_goals.obj"), "wb") as outfile:
-        pickle.dump(start_goals, outfile)
+    # print("Saved %d pairs" % len(start_goals))
+    # with open(os.path.join("/home/alvin/research/planning_uncertainty/start_goals.obj"), "wb") as outfile:
+    #     pickle.dump(start_goals, outfile)
