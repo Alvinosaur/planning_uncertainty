@@ -201,7 +201,6 @@ class NaivePlanner(object):
         return all_results
 
     def expand_state(self, n, state, state_key):
-        self.num_expansions += 1
         self.closed_set.add(state_key)
         bottle_ori = n.bottle_ori
         cur_joints = self.joint_pose_from_state(state)
@@ -346,24 +345,19 @@ class NaivePlanner(object):
             else:
                 print("expanding edge: %s" % n, flush=True)
                 start_time = time.time()
+                self.num_expansions += 1
                 self.expand_state(n, state, state_key)
-                print("time to expand: %.2f" % (time.time() - start_time))
+                self.avg_expand_time += time.time() - start_time
 
-        print("Total time: %.4f" % (time.time() - total_start_time))
-
-        print("States Expanded: %d, found goal: %d" %
-              (self.num_expansions, self.goal_expanded))
-        print("Num full evaluations: %d" % self.num_full_evals)
-        print("Num lazy evaluations: %d" % self.num_lazy_evals)
-
-        print("invalid count: %d" % self.invalid_count)
-        print("Total evaluations: %d" % (self.num_lazy_evals + self.num_full_evals))
-        print("invalid rate: %.3f" % (self.invalid_count / (self.num_lazy_evals + self.num_full_evals)))
         if not self.goal_expanded:
-            return [], [], []
+            return ([], [], []), (
+                self.num_expansions, self.goal_expanded, self.num_full_evals, self.num_lazy_evals, self.invalid_count,
+                self.avg_expand_time / self.num_expansions)
 
         # reconstruct path
-        return self.reconstruct_path()
+        return self.reconstruct_path(), (
+            self.num_expansions, self.goal_expanded, self.num_full_evals, self.num_lazy_evals, self.invalid_count,
+            self.avg_expand_time / self.num_expansions)
 
     def reconstruct_path(self):
         policy = []
@@ -380,6 +374,7 @@ class NaivePlanner(object):
             ai, n = self.transitions[state_key]
             policy.append(self.A.get_action(ai))
             state_key = self.state_to_key(n.state)
+            state = n.state
             node_path.append(n)
 
         # need to reverse since backwards ordering
@@ -422,6 +417,7 @@ class NaivePlanner(object):
         self.num_full_evals = 0
         self.num_lazy_evals = 0
         self.invalid_count = 0
+        self.avg_expand_time = 0
 
         # find solution
         self.goal_expanded = False

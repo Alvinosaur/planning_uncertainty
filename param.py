@@ -23,9 +23,10 @@ def parse_arguments():
     # Replanning after execution
     parser.add_argument('--use_replan', action="store_true")
 
-    # Planning Details
+    # Planning Thresholds
     parser.add_argument('--fall_thresh', action="store", type=float, default="0.1")
     parser.add_argument('--beta_var_thresh', action="store", type=float, default="0.02")
+    parser.add_argument('--replan_dist_thresh', action="store", type=float, default="0.02")
 
     # Simulation Parameters
     parser.add_argument('--num_exec_sims', action="store", type=int, default="20")

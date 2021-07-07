@@ -26,8 +26,8 @@ GRAVITY = -9.81
 def run_policy(planner: NaivePlanner, env: Environment, policy,
                exec_params: EnvParams, cur_bottle_ori=np.array([0, 0, 0, 1.]),
                break_on_fail=True, visualize=False,
-               compare_to_plan=False, state_path=None, compare_plan_thresh=0.05):
-    if compare_to_plan: assert state_path is not None
+               compare_to_plan=False, node_path=None, replan_dist_thresh=0.05):
+    if compare_to_plan: assert node_path is not None
 
     cur_bottle_pos = planner.bottle_pos_from_state(planner.start)
     cur_joints = planner.joint_pose_from_state(planner.start)
@@ -54,6 +54,7 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
 
         state_tuple = StateTuple(bottle_pos=cur_bottle_pos, bottle_ori=cur_bottle_ori,
                                  joints=cur_joints)
+
         step_is_fallen, is_collision, cur_bottle_pos, cur_bottle_ori, cur_joints, _ = (
             env.run_sim(state=state_tuple, action=policy[step], sim_params=exec_params)
         )
@@ -65,11 +66,14 @@ def run_policy(planner: NaivePlanner, env: Environment, policy,
         if is_fallen and break_on_fail:
             break
 
-        if compare_to_plan:
-            planned_bottle_pos = state_path[step][:3]
-            dist_from_plan = np.linalg.norm(cur_bottle_pos - planned_bottle_pos)
-            if dist_from_plan > compare_plan_thresh:
-                break
+        if step < len(policy) - 1:
+            planned_bottle_pos = node_path[step + 1].state[:3]
+        else:
+            planned_bottle_pos = bottle_goal
+        dist_from_plan = np.linalg.norm(cur_bottle_pos - planned_bottle_pos)
+        print("%d: %.3f" % (step, dist_from_plan))
+        if compare_to_plan and dist_from_plan > replan_dist_thresh:
+            break
 
     is_success = planner.reached_goal(cur_bottle_pos) and not is_fallen
     return is_fallen, is_success, executed_traj, cur_bottle_ori
@@ -129,7 +133,7 @@ def piecewise_execution(planner: NaivePlanner, env: Environment,
         success_count = 0
         for exec_i, exec_params in enumerate(exec_params_set):
             print("New Test with params: %s" % exec_params, flush=True)
-            is_fallen, is_success, _, _ = run_policy(planner, env, policy, exec_params,
+            is_fallen, is_success, _, _ = run_policy(planner, env, policy, exec_params, node_path=node_path,
                                                      break_on_fail=True, visualize=visualize)
             env.reset()
             print("Exec #%d: fell: %d, success: %d" %
@@ -149,58 +153,95 @@ def piecewise_execution_replan_helper(planner: NaivePlanner, env: Environment,
                                       exec_params: EnvParams, directory: str, start_goal_idx: int,
                                       max_time_s: int, max_attempts=3,
                                       cur_bottle_ori=np.array([0, 0, 0, 1]),
-                                      compare_plan_thresh=0.05):
-    res_fname = "%s/results_%d" % (directory, start_goal_idx)
+                                      replan_dist_thresh=0.05):
     is_success = False
     is_fallen = False
     final_state_path = []
     final_policy = []
     final_node_path = []
+    planning_times = []
+    exec_times = []
+    expansion_counts = []
+    avg_expansion_times = []
+    full_eval_counts = []
+    lazy_eval_counts = []
+    invalid_counts = []
     executed_traj = None
     attempts = 0
 
-    try:
-        start_time = time.time()
-        while not is_success and not is_fallen and attempts < max_attempts:
-            # plan from current state
-            attempts += 1
-            if executed_traj is not None:
-                planner.start = executed_traj[-1]
-            try:
-                with helpers.time_limit(max_time_s):
-                    state_path, policy, node_path = planner.plan(bottle_ori=cur_bottle_ori)
-            except helpers.TimeoutException:
-                print("Timed out, num_expand: %d" % planner.num_expansions,
-                      flush=True)
-                break
+    total_start_time = time.time()
+    while not is_success and not is_fallen and attempts < max_attempts:
+        # plan from current state
+        attempts += 1
+        if executed_traj is not None:
+            planner.start = executed_traj[-1]
+        try:
+            with helpers.time_limit(max_time_s):
+                start_plan_time = time.time()
+                (state_path, policy, node_path), extra_info = planner.plan(bottle_ori=cur_bottle_ori)
+                planning_times.append(time.time() - start_plan_time)
 
-            final_state_path += state_path
-            final_policy += policy
-            final_node_path += node_path
+            (num_expand, goal_expanded, num_full_evals,
+             num_lazy_evals, invalid_count, avg_expansion_time) = extra_info
+            avg_expansion_times.append(avg_expansion_time)
+            expansion_counts.append(num_expand)
+            full_eval_counts.append(num_full_evals)
+            lazy_eval_counts.append(num_lazy_evals)
+            invalid_counts.append(invalid_count)
 
-            is_fallen, is_success, executed_traj, cur_bottle_ori = (
-                run_policy(planner, env, policy, exec_params,
-                           cur_bottle_ori=cur_bottle_ori,
-                           break_on_fail=True, visualize=False,
-                           compare_to_plan=True, state_path=state_path,
-                           compare_plan_thresh=compare_plan_thresh)
-            )
-            if is_success:
-                status_msg = "success"
-            elif is_fallen:
-                status_msg = "failure, knocked over"
+            if goal_expanded:
+                final_state_path += state_path
+                final_policy += policy
+                final_node_path += node_path
+
+                start_exec_time = time.time()
+                is_fallen, is_success, executed_traj, cur_bottle_ori = (
+                    run_policy(planner, env, policy, exec_params,
+                               cur_bottle_ori=cur_bottle_ori,
+                               break_on_fail=True, visualize=False,
+                               compare_to_plan=True, node_path=node_path,
+                               replan_dist_thresh=replan_dist_thresh)
+                )
+                exec_times.append(time.time() - start_exec_time)
+
+                if is_success:
+                    status_msg = "success"
+                elif is_fallen:
+                    status_msg = "failure, knocked over"
+                else:
+                    status_msg = "replanning..."
+
+                print(f"Execution of Plan: {status_msg}")
             else:
-                status_msg = "replanning..."
+                exec_times.append(None)
 
-            print(f"Execution of Plan: {status_msg}")
-            time_taken = time.time() - start_time
-            print("time taken: %.3f" % time_taken, flush=True)
-            print("Saving plan to %s" % res_fname, flush=True)
-            np.savez("%s" % res_fname,
-                     state_path=final_state_path, policy=final_policy, node_path=final_node_path)
+        except helpers.TimeoutException:
+            print("Timed out, num_expand: %d" % planner.num_expansions,
+                  flush=True)
+            planning_times.append(None)
+            avg_expansion_times.append(None)
+            exec_times.append(None)
+            expansion_counts.append(None)
+            full_eval_counts.append(None)
+            lazy_eval_counts.append(None)
+            invalid_counts.append(None)
+            break
 
-    except helpers.TimeoutException:
-        print("time taken: NA", flush=True)
+    if final_state_path != []:
+        np.savez("%s/results_%d" % (directory, start_goal_idx),
+                 state_path=final_state_path, policy=final_policy, node_path=final_node_path)
+
+    total_time_taken = time.time() - total_start_time
+    np.savez("%s/analysis_%d" % (directory, start_goal_idx),
+             total_time_taken=total_time_taken, num_attempts=attempts,
+             avg_expansion_times=avg_expansion_times,
+             planning_times=planning_times, exec_times=exec_times,
+             expansion_counts=expansion_counts,
+             full_eval_counts=full_eval_counts,
+             lazy_eval_counts=lazy_eval_counts,
+             invalid_counts=invalid_counts,
+             is_success=is_success,
+             is_fallen=is_fallen)
 
     return is_success, is_fallen, attempts
 
@@ -336,6 +377,22 @@ class Main(object):
             self.env.set_distribs(min_fric=self.env.bottle.low_fric_max, max_fric=self.env.bottle.high_fric_min)
             self.single_param = self.env.gen_random_env_param_set(num=1)[0]
 
+        # Test if single planner using low and high friction produce different performance
+        if args.exec_low_fric:
+            print("Manually forcing single planner to use LOW friction")
+            self.env.set_distribs(min_fric=self.env.bottle.low_fric_min, max_fric=self.env.bottle.low_fric_max)
+            self.exec_params_set = self.env.gen_random_env_param_set(num=1)
+
+        elif args.exec_high_fric:
+            print("Manually forcing single planner to use HIGH friction")
+            self.env.set_distribs(min_fric=self.env.bottle.high_fric_min, max_fric=self.env.bottle.high_fric_max)
+            self.exec_params_set = self.env.gen_random_env_param_set(num=1)
+
+        elif args.exec_med_fric or not args.load_params:
+            print("Manually forcing single planner to use MEDIUM friction")
+            self.env.set_distribs(min_fric=self.env.bottle.low_fric_max, max_fric=self.env.bottle.high_fric_min)
+            self.exec_params_set = self.env.gen_random_env_param_set(num=1)
+
         # save all parameters used
         if not args.replay_results:
             print("single_param:")
@@ -395,7 +452,7 @@ class Main(object):
             if args.solved_path_index is not None:
                 assert args.replay_dir is not None
                 directory = args.replay_dir
-                res_fname = os.path.join(directory, start_goal_idx)
+                res_fname = os.path.join(directory, "results_%d" % start_goal_idx)
                 results = np.load("%s.npz" % res_fname, allow_pickle=True)
                 node_path = results["node_path"]
                 (_, goalb, _) = self.start_goals[start_goal_idx]
@@ -421,7 +478,8 @@ class Main(object):
                                                   directory=directory,
                                                   start_goal_idx=start_goal_idx,
                                                   max_time_s=args.max_time,
-                                                  cur_bottle_ori=start_bottle_ori)
+                                                  cur_bottle_ori=start_bottle_ori,
+                                                  replan_dist_thresh=args.replan_dist_thresh)
             else:
                 start = time.time()
                 piecewise_execution(self.planner, self.env,

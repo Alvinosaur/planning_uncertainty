@@ -45,8 +45,8 @@ with open(
     # remove_time, remove_time_avg = get_sum_avg(text, "remove_time")
     # sim_time, sim_time_avg = get_sum_avg(text, "expansion_sim_time")
 
-    findings = re.findall(f"Total time: (\d+.\d+)", text)
-    total_times = np.array([float(v) for v in findings])
+    findings = re.findall(f"Total Planning time: (\d+.\d+)", text)
+    total_planning_times = np.array([float(v) for v in findings])
     print(total_times)
 
     # findings = re.findall(f"States Expanded: (\d+)", text)
